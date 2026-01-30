@@ -8,134 +8,176 @@
 
 [![License](https://img.shields.io/github/license/rbln-sw/rbln-container-toolkit)](https://github.com/rbln-sw/rbln-container-toolkit/blob/main/LICENSE)
 
-RBLN Container Toolkit enables GPU-like container support for Rebellions NPU devices using the Container Device Interface (CDI) specification.
+RBLN Container Toolkit enables container runtimes to access [Rebellions](https://rebellions.ai) NPU devices using the [Container Device Interface (CDI)](https://github.com/cncf-tags/container-device-interface) specification. It automatically discovers host RBLN libraries and tools, generates CDI specs, and configures your container runtime — so containers can use NPU hardware with zero application changes.
+
+## How It Works
+
+```
+                          ┌─────────────────────────────────────────┐
+  Host System             │           RBLN Container Toolkit        │
+ ─────────────            │                                         │
+                          │  1. Discover    RBLN libs & tools       │
+  /usr/lib64/             │       ↓         on the host             │
+    librbln-*.so ────────►│  2. Generate    CDI spec (rbln.yaml)    │
+  /usr/bin/               │       ↓                                 │
+    rbln-smi ────────────►│  3. Configure   container runtime       │
+                          │       ↓         (containerd/crio/docker)│
+                          │  4. Hook        update ldcache          │
+                          │                 in containers            │
+                          └──────────────────────┬──────────────────┘
+                                                 │
+                                                 ▼
+                          ┌──────────────────────────────────────────┐
+  Container               │  $ docker run --device rebellions.ai/    │
+                          │      npu=runtime my-app                  │
+                          │                                          │
+                          │  ✓ RBLN libraries mounted                │
+                          │  ✓ Tools available (rbln-smi)            │
+                          │  ✓ ldcache updated automatically         │
+                          └──────────────────────────────────────────┘
+```
+
+The toolkit provides three binaries:
+
+| Binary | Role |
+|--------|------|
+| **`rbln-ctk`** | Main CLI — generate CDI specs, configure runtimes, inspect system |
+| **`rbln-ctk-daemon`** | Kubernetes daemon — automated setup with health endpoints and graceful shutdown |
+| **`rbln-cdi-hook`** | OCI hook — runs inside containers to update ldcache and create symlinks |
 
 ## Features
 
-- **CDI Specification Generation**: Automatically discovers RBLN libraries and tools, generating CDI specs for container runtimes
-- **Multi-Runtime Support**: Configure containerd, CRI-O, and Docker for CDI support
-- **Automated Installation**: One-command setup with automatic runtime restart
-- **Library Isolation**: Optional isolated library paths to prevent conflicts with host libraries
-- **CDI Hooks**: Automatic ldcache updates in containers for proper library resolution
-- **CoreOS Support**: Works with Red Hat CoreOS and driver containers via `--driver-root`
-- **Multi-OS Support**: Automatic detection and configuration for Ubuntu, RHEL, and CoreOS
-- **SELinux Support**: Configurable mount context for SELinux-enabled systems
+- **Automatic Discovery** — Finds RBLN libraries, their dependencies, and CLI tools on the host
+- **Multi-Runtime** — Supports containerd, CRI-O, and Docker
+- **Library Isolation** — Optional isolated library paths to prevent host/container conflicts
+- **Kubernetes Native** — DaemonSet deployment with liveness, readiness, and startup probes
+- **CoreOS / OpenShift** — Works with driver containers via `--driver-root`
+- **SELinux** — Configurable mount context for enforcing systems
+- **Dry Run** — Preview all changes before applying
 
-## Binaries
+## Prerequisites
 
-| Binary | Purpose |
-|--------|---------|
-| `rbln-ctk` | Main CLI tool for CDI generation and runtime configuration |
-| `rbln-ctk-daemon` | Daemon mode for Kubernetes DaemonSet deployments with health checks and graceful shutdown |
-| `rbln-cdi-hook` | CDI hook for updating ldcache in containers |
+- Linux x86_64 (Ubuntu 22.04+, RHEL 9+, or Red Hat CoreOS)
+- [RBLN driver](https://rebellions.ai) installed on the host
+- A supported container runtime: containerd, CRI-O, or Docker
 
 ## Installation
+
+### From Package (Recommended)
+
+```bash
+# Debian/Ubuntu
+sudo dpkg -i rbln-container-toolkit_<version>_amd64.deb
+
+# RHEL/CentOS
+sudo rpm -i rbln-container-toolkit-<version>.x86_64.rpm
+```
+
+The package installs all three binaries and systemd units automatically.
 
 ### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/RBLN-SW/rbln-container-toolkit.git
-cd rbln-container-toolkit/rbln-container-toolkit
-
-# Build all binaries
+cd rbln-container-toolkit
 make build
-
-# Install (requires sudo)
 sudo make install
-```
-
-### Binary Installation
-
-```bash
-sudo cp bin/rbln-ctk /usr/local/bin/
-sudo cp bin/rbln-cdi-hook /usr/bin/
-sudo cp bin/rbln-ctk-daemon /usr/local/bin/
-sudo chmod +x /usr/local/bin/rbln-ctk /usr/local/bin/rbln-cdi-hook /usr/local/bin/rbln-ctk-daemon
 ```
 
 ## Quick Start
 
-### Option 1: Using rbln-ctk (Recommended for standalone)
+The fastest way to get NPU access in containers:
 
 ```bash
-# Generate CDI specification
+# 1. Generate CDI specification (discovers RBLN libraries on host)
 sudo rbln-ctk cdi generate
 
-# Configure specific runtime
-sudo rbln-ctk runtime configure --runtime containerd
-
-# Preview changes without applying
-rbln-ctk runtime configure --dry-run
-```
-
-### Option 2: Using rbln-ctk-daemon (Kubernetes DaemonSet)
-
-The daemon mode is designed for Kubernetes deployments where it:
-- Installs artifacts on startup
-- Configures the container runtime
-- Runs with health check endpoints (/live, /ready, /startup)
-- Cleans up on SIGTERM
-
-```bash
-# Run as daemon (auto-detects runtime)
-rbln-ctk-daemon
-
-# Run with explicit runtime
-rbln-ctk-daemon --runtime containerd
-
-# Preview changes without applying
-rbln-ctk-daemon --dry-run
-```
-
-### Option 3: Manual Setup
-
-#### 1. Generate CDI Specification
-
-```bash
-# Generate CDI spec (requires RBLN driver installed)
-sudo rbln-ctk cdi generate
-
-# Preview without writing
-rbln-ctk cdi generate --dry-run
-
-# Output to stdout
-rbln-ctk cdi generate --output -
-```
-
-#### 2. Configure Container Runtime
-
-```bash
-# Auto-detect and configure runtime
+# 2. Configure your container runtime for CDI support
 sudo rbln-ctk runtime configure
 
-# Configure specific runtime
-sudo rbln-ctk runtime configure --runtime containerd
+# 3. Run a container with NPU access
+docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04
+```
 
-# Preview changes
+That's it. The toolkit auto-detects your runtime and applies the right configuration.
+
+### Verify Setup
+
+```bash
+# Check what was discovered
+rbln-ctk cdi list
+
+# View system info
+rbln-ctk info
+
+# Use NPU tools inside a container
+docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04 rbln-smi
+```
+
+### Preview Before Applying
+
+Every command supports `--dry-run` to see what would change without modifying anything:
+
+```bash
+rbln-ctk cdi generate --dry-run
 rbln-ctk runtime configure --dry-run
 ```
 
-#### 3. Restart Runtime
+## User Guide
+
+### Standalone Setup (rbln-ctk)
+
+For bare-metal or VM hosts running containers directly.
+
+#### Step 1: Generate CDI Spec
 
 ```bash
-# For containerd
-sudo systemctl restart containerd
-
-# For CRI-O
-sudo systemctl restart crio
-
-# For Docker
-sudo systemctl restart docker
+sudo rbln-ctk cdi generate
 ```
 
-### 4. Run Container with NPU
+This discovers RBLN libraries and tools, then writes a CDI spec to `/var/run/cdi/rbln.yaml`.
+
+Options:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-o, --output` | Output path | `/var/run/cdi/rbln.yaml` |
+| `-f, --format` | Output format (`yaml` or `json`) | `yaml` |
+| `--driver-root` | Root path for driver files (CoreOS: `/host`) | `/` |
+| `--container-library-path` | Isolated library path in container | _(same as host)_ |
+| `--dry-run` | Preview without writing | `false` |
+
+#### Step 2: Configure Runtime
+
+```bash
+sudo rbln-ctk runtime configure
+```
+
+Auto-detects the running container runtime and enables CDI support in its configuration.
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-r, --runtime` | Force specific runtime (`containerd`, `crio`, `docker`) | _(auto-detect)_ |
+| `--config-path` | Custom runtime config path | _(runtime default)_ |
+| `--dry-run` | Preview changes | `false` |
+
+#### Step 3: Restart Runtime
+
+The runtime must be restarted to pick up the new configuration:
+
+```bash
+sudo systemctl restart containerd  # or crio, docker
+```
+
+#### Step 4: Run Containers
 
 ```bash
 # Docker
 docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04
+```
 
-# Kubernetes Pod spec
+```yaml
+# Kubernetes Pod
 apiVersion: v1
 kind: Pod
 spec:
@@ -147,204 +189,68 @@ spec:
         rebellions.ai/npu: "1"
 ```
 
-## Commands
+### Kubernetes Deployment (rbln-ctk-daemon)
 
-### rbln-ctk - Main CLI
+For Kubernetes clusters, deploy as a DaemonSet. The daemon handles the entire lifecycle:
 
-#### CDI Management
+1. Generates CDI spec on startup
+2. Configures the container runtime
+3. Restarts the runtime
+4. Serves health check endpoints
+5. Cleans up on SIGTERM (pod termination)
 
-```bash
-# Generate CDI specification
-rbln-ctk cdi generate [flags]
-  -o, --output              Output path (default: /var/run/cdi/rbln.yaml)
-  -f, --format              Output format: yaml, json (default: yaml)
-      --driver-root         Driver root path for CoreOS (default: /)
-      --container-library-path  Container library path for isolation
-      --dry-run             Preview without writing
-
-# List discovered resources
-rbln-ctk cdi list [flags]
-  -f, --format              Output format: table, json, yaml
-```
-
-#### Runtime Configuration
-
-```bash
-# Configure container runtime for CDI
-rbln-ctk runtime configure [flags]
-  -r, --runtime             Runtime: containerd, crio, docker (auto-detected)
-      --config-path         Custom config path
-      --dry-run             Preview changes
-```
-
-#### System Information
-
-```bash
-# Display system info
-rbln-ctk info
-
-# Display version
-rbln-ctk version
-```
-
-### rbln-ctk-daemon - Daemon Mode for Kubernetes
-
-```bash
-# Run as daemon (auto-detects runtime)
-rbln-ctk-daemon [flags]
-  -r, --runtime             Runtime: containerd, crio, docker (auto-detected)
-      --shutdown-timeout    Graceful shutdown timeout (default: 30s)
-      --pid-file            PID file path (default: /run/rbln/rbln-ctk-daemon.pid)
-      --health-port         Health check endpoint port (default: 8080)
-      --no-cleanup-on-exit  Skip cleanup on shutdown
-      --host-root-mount     Host root mount for containerized deployment
-      --cdi-spec-dir        CDI spec output directory
-      --dry-run             Preview changes
-```
-
-Health endpoints:
-- `/live` - Liveness probe (always returns 200 when running)
-- `/ready` - Readiness probe (200 when setup complete)
-- `/startup` - Startup probe (200 when initialized)
-
-### rbln-cdi-hook - CDI Hook
-
-```bash
-# Update ldcache in container (called by CDI)
-rbln-cdi-hook update-ldcache [flags]
-      --folder              Library folders to add to ldcache
-      --ldconfig-path       Path to ldconfig binary
-      --container-spec      OCI container spec path
-```
-
-## Configuration
-
-Configuration file location: `/etc/rbln/container-toolkit.yaml`
-
-```yaml
-# CDI specification settings
-cdi:
-  output-path: /var/run/cdi/rbln.yaml
-  format: yaml
-  vendor: rebellions.ai
-  class: npu
-
-# Library discovery
-libraries:
-  patterns:
-    - "librbln-*.so*"
-  plugin-paths:
-    - /usr/lib64/libibverbs
-    - /usr/lib/x86_64-linux-gnu/libibverbs
-  container-path: ""  # Optional: isolated library path
-
-# Tools to include
-tools:
-  - rbln-smi
-
-# Search paths
-search-paths:
-  libraries:
-    - /usr/lib64
-    - /usr/lib/x86_64-linux-gnu
-  binaries:
-    - /usr/bin
-    - /usr/local/bin
-
-# SELinux settings (for RHEL/CoreOS)
-selinux:
-  enabled: false
-  mount-context: "z"  # "z" for shared, "Z" for private
-
-# Hook settings
-hooks:
-  path: /usr/local/bin/rbln-cdi-hook
-  ldconfig-path: /sbin/ldconfig
-```
-
-### Environment Variables
-
-#### rbln-ctk
-
-| Variable | Description |
-|----------|-------------|
-| `RBLN_CTK_CONFIG` | Path to configuration file |
-| `RBLN_CTK_DEBUG` | Enable debug logging |
-| `RBLN_CTK_QUIET` | Suppress non-error output |
-| `RBLN_CTK_OUTPUT` | CDI output path (for `cdi generate`) |
-| `RBLN_CTK_FORMAT` | Output format for `cdi generate` (yaml/json) |
-| `RBLN_CTK_DRIVER_ROOT` | Driver root path (for `cdi generate`) |
-| `RBLN_CTK_CONTAINER_LIBRARY_PATH` | Container library path for isolation |
-| `RBLN_CTK_LIST_FORMAT` | Output format for `cdi list` (table/json/yaml) |
-| `RBLN_CTK_LIST_DRIVER_ROOT` | Driver root path (for `cdi list`) |
-| `RBLN_CTK_RUNTIME` | Container runtime type |
-| `RBLN_CTK_CONFIG_PATH` | Runtime config path |
-
-#### rbln-ctk-daemon
-
-| Variable | Description |
-|----------|-------------|
-| `RBLN_CTK_DAEMON_DEBUG` | Enable debug logging |
-| `RBLN_CTK_DAEMON_HOST_ROOT` | Host root mount path (auto-detected: "/" on host, "/host" in container) |
-| `RBLN_CTK_DAEMON_CDI_SPEC_DIR` | CDI spec directory |
-| `RBLN_CTK_DAEMON_RUNTIME` | Container runtime (containerd/crio/docker) |
-| `RBLN_CTK_DAEMON_HEALTH_PORT` | Health check port (default: 8080) |
-| `RBLN_CTK_DAEMON_SHUTDOWN_TIMEOUT` | Shutdown timeout (default: 30s) |
-| `RBLN_CTK_DAEMON_PID_FILE` | PID file path |
-| `RBLN_CTK_DAEMON_NO_CLEANUP_ON_EXIT` | Skip cleanup on exit (true/false) |
-
-#### rbln-cdi-hook
-
-| Variable | Description |
-|----------|-------------|
-| `RBLN_CDI_HOOK_FOLDER` | Library folders to add |
-| `RBLN_CDI_HOOK_LDCONFIG_PATH` | ldconfig binary path |
-| `RBLN_CDI_HOOK_CONTAINER_SPEC` | Container spec path |
-
-## Library Isolation
-
-For environments where host library conflicts may occur, use library isolation:
-
-```bash
-# Generate CDI spec with isolated library path
-sudo rbln-ctk cdi generate --container-library-path /rbln/lib64
-
-# Libraries are mounted to /rbln/lib64 and ldcache is updated via hook
-```
-
-This mode:
-- Mounts RBLN libraries to a custom container path (e.g., `/rbln/lib64`)
-- Uses CDI hooks to update ldcache in the container
-- Avoids conflicts with host glibc and other system libraries
-
-## CoreOS / OpenShift Deployment
-
-For Red Hat CoreOS environments, deploy as a DaemonSet:
+#### Deploy
 
 ```bash
 kubectl apply -f deployments/kubernetes/daemonset.yaml
 ```
 
-The DaemonSet:
-1. Runs `rbln-ctk-daemon` which auto-detects the container runtime
-2. Generates CDI specification and configures the runtime
-3. Provides health endpoints for Kubernetes probes
-4. Gracefully cleans up on SIGTERM (pod termination)
+#### Health Endpoints
 
-Example DaemonSet environment configuration:
+| Endpoint | Probe Type | Returns 200 When |
+|----------|------------|-------------------|
+| `/live` | Liveness | Daemon process is running |
+| `/ready` | Readiness | Setup is complete |
+| `/startup` | Startup | Initialization finished |
+
+#### Configuration via Environment
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RBLN_CTK_DAEMON_RUNTIME` | Container runtime | _(auto-detect)_ |
+| `RBLN_CTK_DAEMON_HOST_ROOT` | Host root mount path | `/` (host), `/host` (container) |
+| `RBLN_CTK_DAEMON_CDI_SPEC_DIR` | CDI spec directory | `/var/run/cdi` |
+| `RBLN_CTK_DAEMON_HEALTH_PORT` | Health check port | `8080` |
+| `RBLN_CTK_DAEMON_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout | `30s` |
+| `RBLN_CTK_DAEMON_NO_CLEANUP_ON_EXIT` | Skip cleanup on exit | `false` |
+
+#### CoreOS / OpenShift
+
+For Red Hat CoreOS environments where the host filesystem is mounted at `/host`:
+
 ```yaml
 env:
   - name: RBLN_CTK_DAEMON_HOST_ROOT
     value: "/host"
-  - name: RBLN_CTK_DAEMON_CDI_SPEC_DIR
-    value: "/var/run/cdi"
-  - name: RBLN_CTK_DAEMON_HEALTH_PORT
-    value: "8080"
 ```
 
-## Systemd Integration
+### Library Isolation
 
-Install the systemd service for automatic CDI refresh:
+By default, RBLN libraries are bind-mounted at their host paths inside the container. If this causes conflicts (e.g., different glibc versions), use library isolation:
+
+```bash
+sudo rbln-ctk cdi generate --container-library-path /rbln/lib64
+```
+
+This mode:
+- Mounts libraries to an isolated path (`/rbln/lib64`) instead of host paths
+- Uses the CDI hook to run `ldconfig` inside the container at startup
+- Avoids `LD_LIBRARY_PATH` — the ldcache handles library resolution natively
+- Supports setuid binaries (which ignore `LD_LIBRARY_PATH`)
+
+### Systemd Integration
+
+For automatic CDI spec refresh when driver files change:
 
 ```bash
 sudo cp deployments/systemd/rbln-cdi-refresh.service /etc/systemd/system/
@@ -353,214 +259,87 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now rbln-cdi-refresh.path
 ```
 
-## Development
+## Configuration
 
-### Prerequisites
+The toolkit reads configuration from `/etc/rbln/container-toolkit.yaml`. A sample is provided in [`config/container-toolkit.yaml`](config/container-toolkit.yaml).
 
-- Go 1.21+
-- golangci-lint (for linting)
+All CLI flags can also be set via environment variables with the prefix `RBLN_CTK_` (e.g., `--driver-root` becomes `RBLN_CTK_DRIVER_ROOT`).
 
-### Build
+Key configuration sections:
 
-```bash
-make build           # Build all binaries
-make build-ctk       # Build rbln-ctk only
-make build-hook      # Build rbln-cdi-hook only
-make build-daemon    # Build rbln-ctk-daemon only
-make test            # Run tests
-make lint            # Run linter
-make fmt             # Format code
-make clean           # Clean build artifacts
-```
-
-### Testing
-
-The toolkit includes comprehensive test coverage across unit, integration, and E2E tests.
-
-#### Unit Tests
-
-```bash
-# Run all unit tests
-make test
-
-# Run with race detection
-go test -race ./...
-
-# Run with coverage report
-make test-coverage
-
-# Run specific package tests
-go test -v ./internal/cdi/...
-go test -v ./cmd/rbln-ctk/...
-
-# Generate mock files (requires moq)
-make generate
-```
-
-**Coverage Requirements**:
-- Overall: >= 70%
-- `cmd/rbln-cdi-hook`: >= 60%
-- `cmd/rbln-ctk`: >= 40%
-- `internal/installer`: >= 70%
-
-#### Integration Tests
-
-```bash
-# Run integration tests
-go test -v ./tests/integration/...
-
-# Run with build tag
-go test -tags=integration -v ./tests/integration/...
-```
-
-Integration tests cover:
-- CDI lifecycle (generate → validate → list)
-- Daemon lifecycle (start → health check → SIGTERM → cleanup)
-- Runtime configuration changes
-
-#### E2E Tests
-
-E2E tests use Ginkgo framework with Docker containers to test in isolated environments.
-
-```bash
-# Install Ginkgo (first time only)
-make ginkgo
-
-# Run E2E tests locally (requires Docker)
-make test-e2e-local
-
-# Run E2E tests in container
-make test-e2e
-
-# Run on specific OS images
-make test-e2e-ubuntu2204    # Ubuntu 22.04
-make test-e2e-ubuntu2404    # Ubuntu 24.04
-make test-e2e-rhel9         # RHEL 9
-
-# Run on all supported OS images
-make test-e2e-all-images
-
-# Run full test suite (unit + integration + e2e)
-make test-all
-
-# Clean E2E artifacts
-make clean-e2e
-```
-
-**E2E Test Structure**:
-```
-tests/e2e/
-├── go.mod              # Separate module for Ginkgo dependencies
-├── runner.go           # Test runner abstraction (local/container)
-├── installer.go        # Toolkit installation in containers
-├── e2e_suite_test.go   # Ginkgo test suite
-├── cdi_test.go         # CDI generation tests
-├── runtime_test.go     # Runtime configuration tests
-├── docker_test.go      # Docker integration tests
-└── cli_test.go         # CLI command tests
-```
-
-#### Test BDD Structure
-
-All tests follow strict BDD (Behavior-Driven Development) structure:
-
-```go
-func TestExample(t *testing.T) {
-    // Given - Setup only
-    input := setupTestData()
-    defer cleanup()
-    
-    // When - Single function call
-    result, err := FunctionUnderTest(input)
-    
-    // Then - Assertions only
-    assert.NoError(t, err)
-    assert.Equal(t, expected, result)
-}
-```
-
-### Project Structure
-
-```
-rbln-container-toolkit/
-├── cmd/
-│   ├── rbln-ctk/              # Main CLI tool
-│   ├── rbln-cdi-hook/         # CDI hook binary
-│   └── rbln-ctk-daemon/       # Daemon for Kubernetes deployments
-├── internal/
-│   ├── cdi/                   # CDI generation and validation
-│   ├── config/                # Configuration management
-│   ├── daemon/                # Daemon lifecycle management
-│   ├── discover/              # Library and tool discovery
-│   ├── errors/                # Error types
-│   ├── ldconfig/              # ldconfig wrapper
-│   ├── oci/                   # OCI state management
-│   ├── output/                # Output formatting
-│   ├── restart/               # Runtime restart mechanisms
-│   └── runtime/               # Runtime configuration
-├── deployments/
-│   ├── container/             # Dockerfile
-│   ├── kubernetes/            # DaemonSet manifests
-│   ├── systemd/               # Systemd units
-│   └── scripts/               # Deployment scripts
-├── config/                    # Sample configuration
-└── tests/                     # Integration tests
-```
-
-## Supported Platforms
-
-| OS | Architecture | Status |
-|----|--------------|--------|
-| Ubuntu 22.04+ | x86_64 | ✅ Supported |
-| RHEL 9+ | x86_64 | ✅ Supported |
-| Red Hat CoreOS | x86_64 | ✅ Supported |
+| Section | Controls |
+|---------|----------|
+| `cdi` | Output path, format, vendor/class names |
+| `libraries` | Discovery patterns, plugin paths, container isolation path |
+| `tools` | Which CLI tools to include (e.g., `rbln-smi`) |
+| `search-paths` | Where to look for libraries and binaries |
+| `glibc-exclude` | System libraries to exclude from CDI spec |
+| `selinux` | SELinux mount context settings |
+| `hooks` | CDI hook binary and ldconfig paths |
 
 ## Troubleshooting
 
 ### CDI spec not generated
 
 ```bash
-# Check if RBLN driver is installed
+# Verify RBLN driver is installed
 ls /usr/lib64/librbln-*.so*
 
 # Run with debug output
 rbln-ctk cdi generate --debug
 
-# Check discovered libraries
+# Check what was discovered
 rbln-ctk cdi list
 ```
 
-### Runtime not restarting
+### Container can't find RBLN libraries
 
 ```bash
-# Restart manually after configuration
-sudo systemctl restart docker
-
-# Or for containerd
-sudo systemctl restart containerd
-```
-
-### Permission denied errors
-
-```bash
-# Most operations require root
-sudo rbln-ctk cdi generate
-sudo rbln-ctk runtime configure
-```
-
-### Container can't find libraries
-
-```bash
-# Check if hook is installed
+# Verify hook is installed
 ls -la /usr/local/bin/rbln-cdi-hook
 
 # Regenerate CDI spec
 sudo rbln-ctk cdi generate
 ```
 
+### Runtime not picking up changes
+
+```bash
+# Restart the runtime after configuration
+sudo systemctl restart containerd  # or crio, docker
+```
+
+### Permission errors
+
+Most operations require root access:
+
+```bash
+sudo rbln-ctk cdi generate
+sudo rbln-ctk runtime configure
+```
+
+## Supported Platforms
+
+| OS | Architecture | Status |
+|----|--------------|--------|
+| Ubuntu 22.04+ | x86_64 | Supported |
+| RHEL 9+ | x86_64 | Supported |
+| Red Hat CoreOS | x86_64 | Supported |
+
+## Development
+
+```bash
+make build    # Build all binaries
+make test     # Run unit tests
+make lint     # Run linter
+make fmt      # Format code
+```
+
+See the [Makefile](Makefile) for the full list of targets including integration tests, E2E tests, and packaging.
+
 ## License
 
-Apache License 2.0
+[Apache License 2.0](LICENSE)
 
 ## Contributing
 
@@ -569,7 +348,3 @@ Apache License 2.0
 3. Make your changes with tests
 4. Run `make test && make lint`
 5. Submit a pull request
-
-## Related Projects
-
-- [CDI Specification](https://github.com/cncf-tags/container-device-interface)
