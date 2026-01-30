@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh RBLN CDI specification file
+ConditionPathExists=/dev/rbln0
+ConditionPathExists=/usr/bin/rbln-ctk
+
+[Service]
+Type=oneshot
+Environment=RBLN_CTK_OUTPUT=/var/run/cdi/rbln.yaml
+EnvironmentFile=-/etc/rbln/rbln-cdi-refresh.env
+ExecStartPre=/bin/mkdir -p /var/run/cdi
+ExecStart=/usr/bin/rbln-ctk cdi generate --output /var/run/cdi/rbln.yaml

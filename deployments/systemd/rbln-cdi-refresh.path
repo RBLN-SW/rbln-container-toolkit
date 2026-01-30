@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger CDI refresh on RBLN driver or toolkit install / upgrade events
+
+[Path]
+PathChanged=/usr/lib64/librbln-ml.so
+PathChanged=/usr/lib/x86_64-linux-gnu/librbln-ml.so
+PathChanged=/usr/lib/librbln-ml.so
+PathChanged=/usr/bin/rbln-ctk
+
+[Install]
+WantedBy=multi-user.target
