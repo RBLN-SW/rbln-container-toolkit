@@ -219,10 +219,16 @@ kubectl apply -f deployments/kubernetes/daemonset.yaml
 |----------|-------------|---------|
 | `RBLN_CTK_DAEMON_RUNTIME` | Container runtime | _(auto-detect)_ |
 | `RBLN_CTK_DAEMON_HOST_ROOT` | Host root mount path | `/` (host), `/host` (container) |
+| `RBLN_CTK_DAEMON_DRIVER_ROOT` | Driver root path for CDI spec | `/` |
 | `RBLN_CTK_DAEMON_CDI_SPEC_DIR` | CDI spec directory | `/var/run/cdi` |
+| `RBLN_CTK_DAEMON_CONTAINER_LIBRARY_PATH` | Container library path for isolation | _(empty)_ |
+| `RBLN_CTK_DAEMON_SOCKET` | Runtime socket path | _(auto-detect)_ |
 | `RBLN_CTK_DAEMON_HEALTH_PORT` | Health check port | `8080` |
 | `RBLN_CTK_DAEMON_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout | `30s` |
+| `RBLN_CTK_DAEMON_PID_FILE` | PID file path | `/run/rbln/toolkit.pid` |
 | `RBLN_CTK_DAEMON_NO_CLEANUP_ON_EXIT` | Skip cleanup on exit | `false` |
+| `RBLN_CTK_DAEMON_DEBUG` | Enable debug logging | `false` |
+| `RBLN_CTK_DAEMON_FORCE` | Terminate existing instance before starting | `false` |
 
 #### CoreOS / OpenShift
 
