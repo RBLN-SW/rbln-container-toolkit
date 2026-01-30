@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+rbln-ctk
+*.exe
+*.out
+coverage.txt
+coverage.html
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Test artifacts
+*_test.go
+tests/
+
+# Documentation
+*.md
+docs/
+
+# Deployment files (not needed in image build)
+deployments/
+
+# Development files
+Makefile
+.golangci.yml

@@ -1,0 +1,116 @@
+# RBLN Container Toolkit Configuration
+#
+# This configuration file controls CDI specification generation for
+# Rebellions NPU containers.
+#
+# Default location: /etc/rbln/container-toolkit.yaml
+# Override with: RBLN_CTK_CONFIG environment variable or --config flag
+
+# CDI specification settings
+cdi:
+  # Output path for CDI specification
+  output-path: /var/run/cdi/rbln.yaml
+
+  # Output format: yaml or json
+  format: yaml
+
+  # CDI vendor name (forms part of device identifier)
+  vendor: rebellions.ai
+
+  # CDI device class (forms part of device identifier)
+  # Device name will be: rebellions.ai/npu=runtime
+  class: npu
+
+# Library discovery settings
+libraries:
+  # Patterns to match RBLN libraries
+  patterns:
+    - "librbln-*.so*"
+
+  # Plugin library paths (for dlopen libraries like libibverbs)
+  plugin-paths:
+    - /usr/lib64/libibverbs
+    - /usr/lib/x86_64-linux-gnu/libibverbs
+
+  # Container path for library isolation (optional)
+  # When set, libraries are mounted to this path instead of their host paths,
+  # and a CDI hook updates the ldcache at container start.
+  # This prevents library version conflicts (e.g., libbz2, libz) between
+  # host and container, and supports setuid binaries.
+  #
+  # Example usage:
+  #   container-path: /usr/lib64/rbln
+  #
+  # With this setting:
+  #   - Libraries mount to: /usr/lib64/rbln/librbln-ml.so
+  #   - Plugins mount to:   /usr/lib64/rbln/libibverbs/libmlx5.so
+  #   - CDI hook runs ldconfig to update /etc/ld.so.cache in container
+  #   - Binaries (rbln-smi) remain at their original paths (/usr/bin/)
+  #   - LD_LIBRARY_PATH is NOT set (ldcache handles library discovery)
+  #
+  # Leave empty (default) to use the same paths as on the host.
+  container-path: ""
+
+# Tools to include in CDI specification
+tools:
+  - rbln-smi
+  - rbln-stat
+  - rblnBandwidthLatencyTest
+
+# Search paths for discovering libraries and binaries
+search-paths:
+  # Library search paths
+  libraries:
+    - /usr/lib64
+    - /usr/lib/x86_64-linux-gnu
+    - /usr/lib
+    - /usr/local/lib
+    - /usr/local/lib64
+
+  # Binary search paths
+  binaries:
+    - /usr/bin
+    - /usr/local/bin
+
+# glibc libraries to exclude from CDI specification
+# These are provided by the container and should not be mounted from host
+glibc-exclude:
+  - "ld-linux*"
+  - "linux-vdso*"
+  - "libc.so*"
+  - "libm.so*"
+  - "libpthread*"
+  - "libdl*"
+  - "librt*"
+  - "libgcc_s*"
+  - "libstdc++*"
+  - "libresolv*"
+  - "libnss_*"
+
+# SELinux settings for CDI mounts
+# Enable on systems with SELinux enforcing (e.g., RHEL, CoreOS)
+selinux:
+  # Enable SELinux context for bind mounts
+  # Set to true on RHEL, CentOS, Fedora, or CoreOS systems
+  enabled: false
+
+  # Mount context option:
+  # - "z" (lowercase): Shared label - multiple containers can access
+  # - "Z" (uppercase): Private label - only this container can access
+  # Use "z" for RBLN libraries that may be accessed by multiple containers
+  mount-context: "z"
+
+# CDI hook settings
+# These settings configure the rbln-cdi-hook binary used for ldcache updates
+# when container-path is set for library isolation.
+hooks:
+  # Path to the rbln-cdi-hook binary
+  # Default: /usr/local/bin/rbln-cdi-hook (installed with the toolkit)
+  path: /usr/local/bin/rbln-cdi-hook
+
+  # Path to ldconfig binary used by the hook
+  # Default: /sbin/ldconfig (standard on most Linux distributions)
+  ldconfig-path: /sbin/ldconfig
+
+# Debug mode (verbose logging)
+debug: false

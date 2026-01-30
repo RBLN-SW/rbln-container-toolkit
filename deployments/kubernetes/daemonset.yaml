@@ -1,0 +1,237 @@
+# RBLN Container Toolkit DaemonSet
+#
+# This DaemonSet runs the rbln-ctk-daemon on all nodes with RBLN NPUs.
+# The daemon:
+# 1. Auto-detects the container runtime
+# 2. Generates CDI specifications for RBLN devices
+# 3. Configures and restarts the runtime
+# 4. Runs until SIGTERM, then cleans up
+#
+# Usage:
+#   kubectl apply -f daemonset.yaml
+#
+# Requirements:
+#   - RBLN driver must be installed (either directly or via driver container)
+#   - For CoreOS: driver container should mount to /run/rbln/driver
+#
+# Environment:
+#   - Standard Linux: host-root-mount is /host
+#   - CoreOS: host-root-mount is /run/rbln/driver
+#
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rbln-container-toolkit
+  namespace: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-container-toolkit
+    app.kubernetes.io/component: container-toolkit
+    app.kubernetes.io/part-of: rbln
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rbln-container-toolkit
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rbln-container-toolkit
+        app.kubernetes.io/component: container-toolkit
+        app.kubernetes.io/part-of: rbln
+    spec:
+      # Schedule only on nodes with RBLN NPU
+      # Uncomment and adjust the nodeSelector for your environment
+      # nodeSelector:
+      #   feature.node.kubernetes.io/pci-XXXX.present: "true"
+
+      tolerations:
+        # Tolerate RBLN NPU taint
+        - key: rbln.ai/npu
+          operator: Exists
+          effect: NoSchedule
+        # Tolerate master/control-plane taint if NPU nodes include control plane
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+
+      priorityClassName: system-node-critical
+
+      hostPID: true
+      hostNetwork: false
+      hostIPC: false
+
+      serviceAccountName: rbln-container-toolkit
+
+      containers:
+        - name: toolkit
+          image: rebellions/rbln-container-toolkit:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - rbln-ctk-daemon
+          args: []  # Auto-detect runtime by default
+          # Explicit runtime example:
+          # args: ["--runtime", "containerd"]
+          env:
+            - name: RBLN_CTK_DAEMON_HOST_ROOT
+              value: "/host"
+            - name: RBLN_CTK_DAEMON_CDI_DIR
+              value: "/var/run/cdi"
+            - name: RBLN_CTK_DAEMON_HEALTH_PORT
+              value: "8080"
+            # Optional: Library isolation (mount libs to custom path)
+            # - name: RBLN_CTK_DAEMON_CONTAINER_LIBRARY_PATH
+            #   value: "/rbln/lib64"
+            # Optional: Custom runtime socket path
+            # - name: RBLN_CTK_DAEMON_SOCKET
+            #   value: "/run/containerd/containerd.sock"
+          ports:
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          securityContext:
+            privileged: true
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 1
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: health
+            initialDelaySeconds: 0
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            # Host root for accessing driver libraries and runtime configs
+            - name: host-root
+              mountPath: /host
+            # CDI specification output directory
+            - name: cdi-dir
+              mountPath: /var/run/cdi
+            # PID file and runtime state
+            - name: run-rbln
+              mountPath: /run/rbln
+            # containerd socket
+            - name: containerd-sock
+              mountPath: /run/containerd/containerd.sock
+              readOnly: true
+            # Docker socket (if using Docker)
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+              readOnly: true
+            # CRI-O socket (if using CRI-O)
+            - name: crio-sock
+              mountPath: /var/run/crio/crio.sock
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+      volumes:
+        # Host filesystem root
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+
+        # CDI specification output directory
+        - name: cdi-dir
+          hostPath:
+            path: /var/run/cdi
+            type: DirectoryOrCreate
+
+        # RBLN runtime state directory
+        - name: run-rbln
+          hostPath:
+            path: /run/rbln
+            type: DirectoryOrCreate
+
+        # containerd socket
+        - name: containerd-sock
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: Socket
+
+        # Docker socket (may not exist)
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: ""
+
+        # CRI-O socket (may not exist)
+        - name: crio-sock
+          hostPath:
+            path: /var/run/crio/crio.sock
+            type: ""
+
+      # Restart policy for DaemonSet
+      restartPolicy: Always
+
+      # Termination grace period - allow time for cleanup
+      terminationGracePeriodSeconds: 60
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rbln-container-toolkit
+  namespace: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-container-toolkit
+---
+# Role for reading configmaps if needed
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rbln-container-toolkit
+  namespace: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-container-toolkit
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rbln-container-toolkit
+  namespace: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-container-toolkit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rbln-container-toolkit
+subjects:
+  - kind: ServiceAccount
+    name: rbln-container-toolkit
+    namespace: rbln-system

@@ -1,0 +1,72 @@
+# nfpm configuration for RBLN Container Toolkit
+# https://nfpm.goreleaser.com/configuration/
+
+name: rbln-container-toolkit
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Rebellions <support@rebellions.ai>
+description: Container toolkit for Rebellions NPU devices
+vendor: Rebellions
+homepage: https://github.com/RBLN-SW/rbln-container-toolkit
+license: Apache-2.0
+
+contents:
+  # Binaries
+  - src: ./bin/rbln-ctk
+    dst: /usr/bin/rbln-ctk
+    file_info:
+      mode: 0755
+
+  - src: ./bin/rbln-cdi-hook
+    dst: /usr/local/bin/rbln-cdi-hook
+    file_info:
+      mode: 0755
+
+  - src: ./bin/rbln-ctk-daemon
+    dst: /usr/bin/rbln-ctk-daemon
+    file_info:
+      mode: 0755
+
+  # Configuration
+  - src: ./config/container-toolkit.yaml
+    dst: /etc/rbln/container-toolkit.yaml
+    type: config
+    file_info:
+      mode: 0644
+
+  # Systemd service files
+  - src: ./deployments/systemd/rbln-cdi-refresh.service
+    dst: /usr/lib/systemd/system/rbln-cdi-refresh.service
+    file_info:
+      mode: 0644
+
+  - src: ./deployments/systemd/rbln-cdi-refresh.path
+    dst: /usr/lib/systemd/system/rbln-cdi-refresh.path
+    file_info:
+      mode: 0644
+
+  # Create directories
+  - dst: /etc/cdi
+    type: dir
+    file_info:
+      mode: 0755
+
+  - dst: /var/run/cdi
+    type: dir
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: ./deployments/scripts/postinstall.sh
+  preremove: ./deployments/scripts/preremove.sh
+
+overrides:
+  deb:
+    depends:
+      - libc6
+  rpm:
+    depends:
+      - glibc

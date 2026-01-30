@@ -1,0 +1,134 @@
+# T037: DaemonSet manifest test cases
+#
+# This file documents test scenarios for the DaemonSet manifest.
+# Tests can be validated using:
+# - kubectl apply --dry-run=client -f daemonset.yaml
+# - kubeval daemonset.yaml
+# - kubeconform daemonset.yaml
+#
+# Test Cases:
+#
+# TC-DS-001: Basic Structure
+# - Must have apiVersion: apps/v1
+# - Must have kind: DaemonSet
+# - Must have metadata.name: rbln-container-toolkit
+# - Must have metadata.namespace defined
+#
+# TC-DS-002: Labels and Selectors
+# - metadata.labels must include app.kubernetes.io/name
+# - spec.selector.matchLabels must match template.metadata.labels
+#
+# TC-DS-003: Init Containers
+# - Must have init container for wait-for-driver
+# - Must have init container for cdi-generator
+# - cdi-generator must use rbln-ctk cdi generate command
+# - cdi-generator must mount driver-root and cdi-output volumes
+#
+# TC-DS-004: Volumes
+# - Must have driver-root volume (hostPath to /run/rbln/driver)
+# - Must have cdi-output volume (hostPath to /var/run/cdi)
+#
+# TC-DS-005: Node Selection
+# - Must have nodeSelector for NPU nodes (optional)
+# - Must have tolerations for rbln.ai/npu taint
+#
+# TC-DS-006: Security Context
+# - init containers must have appropriate privileges for CDI generation
+#
+# TC-DS-007: Resource Limits
+# - Containers should have resource requests/limits defined
+#
+# TC-DS-008: Driver Root Integration
+# - cdi-generator must pass --driver-root=/run/rbln/driver
+# - cdi-generator must pass --output=/var/run/cdi/rbln.yaml
+#
+# Validation Commands:
+#
+# Dry-run validation:
+#   kubectl apply --dry-run=client -f daemonset.yaml
+#
+# Schema validation (requires kubeval):
+#   kubeval --strict daemonset.yaml
+#
+# Kubeconform validation (requires kubeconform):
+#   kubeconform -strict daemonset.yaml
+#
+# Actual deployment test:
+#   kubectl apply -f daemonset.yaml -n rbln-system
+#   kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=rbln-container-toolkit -n rbln-system --timeout=120s
+#
+# Verify CDI spec generation:
+#   kubectl exec -it $(kubectl get pods -l app.kubernetes.io/name=rbln-container-toolkit -n rbln-system -o jsonpath='{.items[0].metadata.name}') -n rbln-system -- cat /var/run/cdi/rbln.yaml
+---
+# Test manifest for validation (minimal example)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rbln-container-toolkit-test
+  namespace: rbln-system
+  labels:
+    app.kubernetes.io/name: rbln-container-toolkit
+    app.kubernetes.io/component: container-toolkit
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rbln-container-toolkit
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rbln-container-toolkit
+    spec:
+      tolerations:
+        - key: rbln.ai/npu
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: wait-for-driver
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for RBLN driver..."
+              until [ -f /run/rbln/driver/usr/lib64/librbln.so ]; do
+                sleep 2
+              done
+              echo "Driver ready"
+          volumeMounts:
+            - name: driver-root
+              mountPath: /run/rbln/driver
+              readOnly: true
+        - name: cdi-generator
+          image: rebellions/rbln-container-toolkit:latest
+          command:
+            - rbln-ctk
+            - cdi
+            - generate
+          args:
+            - "--driver-root=/run/rbln/driver"
+            - "--output=/var/run/cdi/rbln.yaml"
+            - "--format=yaml"
+          volumeMounts:
+            - name: driver-root
+              mountPath: /run/rbln/driver
+              readOnly: true
+            - name: cdi-output
+              mountPath: /var/run/cdi
+          securityContext:
+            privileged: true
+      containers:
+        - name: toolkit
+          image: gcr.io/google_containers/pause:3.9
+          resources:
+            limits:
+              memory: "16Mi"
+              cpu: "10m"
+      volumes:
+        - name: driver-root
+          hostPath:
+            path: /run/rbln/driver
+            type: DirectoryOrCreate
+        - name: cdi-output
+          hostPath:
+            path: /var/run/cdi
+            type: DirectoryOrCreate

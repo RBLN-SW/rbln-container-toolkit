@@ -1,0 +1,33 @@
+# Binaries
+/bin/
+
+# Test binary
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+
+# Internal design specs
+specs/
+
+# Internal planning/tracking
+.sisyphus/
+AGENTS.md
