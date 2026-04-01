@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -67,9 +68,12 @@ func (f *Formatter) formatTable(result *discover.DiscoveryResult) error {
 		for _, tool := range result.Tools {
 			fmt.Fprintf(w, "tool\t%s\t%s\n", tool.Name, tool.Path)
 		}
+		for _, dev := range result.Devices {
+			fmt.Fprintf(w, "device\t%s\t%s\n", filepath.Base(dev.Path), dev.Path)
+		}
 	}
 
-	if result == nil || (len(result.Libraries) == 0 && len(result.Tools) == 0) {
+	if result == nil || (len(result.Libraries) == 0 && len(result.Tools) == 0 && len(result.Devices) == 0) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(f.writer, "No RBLN libraries or tools found. Ensure the RBLN driver is installed.")
 	}
@@ -81,6 +85,7 @@ func (f *Formatter) formatTable(result *discover.DiscoveryResult) error {
 type ListOutput struct {
 	Libraries []LibraryOutput `json:"libraries" yaml:"libraries"`
 	Tools     []ToolOutput    `json:"tools" yaml:"tools"`
+	Devices   []DeviceOutput  `json:"devices" yaml:"devices"`
 }
 
 // LibraryOutput is the library output structure.
@@ -96,10 +101,16 @@ type ToolOutput struct {
 	Path string `json:"path" yaml:"path"`
 }
 
+// DeviceOutput is the device output structure.
+type DeviceOutput struct {
+	Path string `json:"path" yaml:"path"`
+}
+
 func (f *Formatter) toListOutput(result *discover.DiscoveryResult) ListOutput {
 	output := ListOutput{
 		Libraries: []LibraryOutput{},
 		Tools:     []ToolOutput{},
+		Devices:   []DeviceOutput{},
 	}
 
 	if result != nil {
@@ -114,6 +125,11 @@ func (f *Formatter) toListOutput(result *discover.DiscoveryResult) ListOutput {
 			output.Tools = append(output.Tools, ToolOutput{
 				Name: tool.Name,
 				Path: tool.Path,
+			})
+		}
+		for _, dev := range result.Devices {
+			output.Devices = append(output.Devices, DeviceOutput{
+				Path: dev.Path,
 			})
 		}
 	}

@@ -42,8 +42,12 @@ func GenerateCDISpec(opts *Options) error {
 	if toolDiscoverer == nil {
 		toolDiscoverer = discover.NewToolDiscoverer(opts.Config)
 	}
+	deviceDiscoverer := opts.DeviceDiscoverer
+	if deviceDiscoverer == nil {
+		deviceDiscoverer = discover.NewDeviceDiscoverer(opts.Config)
+	}
 
-	result, err := DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := DiscoverResources(libDiscoverer, toolDiscoverer, deviceDiscoverer)
 	if err != nil {
 		if opts.ErrorMode == ErrorModeStrict {
 			return fmt.Errorf("discover resources: %w", err)
@@ -95,8 +99,12 @@ func GenerateCDISpecToWriter(w io.Writer, opts *Options) error {
 	if toolDiscoverer == nil {
 		toolDiscoverer = discover.NewToolDiscoverer(opts.Config)
 	}
+	deviceDiscoverer := opts.DeviceDiscoverer
+	if deviceDiscoverer == nil {
+		deviceDiscoverer = discover.NewDeviceDiscoverer(opts.Config)
+	}
 
-	result, err := DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := DiscoverResources(libDiscoverer, toolDiscoverer, deviceDiscoverer)
 	if err != nil {
 		if opts.ErrorMode == ErrorModeStrict {
 			return fmt.Errorf("discover resources: %w", err)
@@ -125,8 +133,8 @@ func GenerateCDISpecToWriter(w io.Writer, opts *Options) error {
 	return nil
 }
 
-// DiscoverResources discovers libraries and tools using the provided discoverers.
-func DiscoverResources(libDisc discover.LibraryDiscoverer, toolDisc discover.ToolDiscoverer) (*discover.DiscoveryResult, error) {
+// DiscoverResources discovers libraries, tools, and devices using the provided discoverers.
+func DiscoverResources(libDisc discover.LibraryDiscoverer, toolDisc discover.ToolDiscoverer, devDisc discover.DeviceDiscoverer) (*discover.DiscoveryResult, error) {
 	result := &discover.DiscoveryResult{}
 
 	rblnLibs, err := libDisc.DiscoverRBLN()
@@ -153,6 +161,14 @@ func DiscoverResources(libDisc discover.LibraryDiscoverer, toolDisc discover.Too
 			return nil, fmt.Errorf("discover tools: %w", err)
 		}
 		result.Tools = tools
+	}
+
+	if devDisc != nil {
+		devices, err := devDisc.Discover()
+		if err != nil {
+			return nil, fmt.Errorf("discover devices: %w", err)
+		}
+		result.Devices = devices
 	}
 
 	return result, nil

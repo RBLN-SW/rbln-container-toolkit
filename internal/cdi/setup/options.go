@@ -57,6 +57,8 @@ type Options struct {
 	LibraryDiscoverer discover.LibraryDiscoverer
 	// ToolDiscoverer is used for tool discovery (optional, for testing).
 	ToolDiscoverer discover.ToolDiscoverer
+	// DeviceDiscoverer is used for device node discovery (optional, for testing).
+	DeviceDiscoverer discover.DeviceDiscoverer
 }
 
 // Option is a function that modifies SetupOptions.

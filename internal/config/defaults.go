@@ -33,6 +33,9 @@ func DefaultConfig() *Config {
 			},
 			ContainerPath: "", // Empty = default mode (hostPath == containerPath)
 		},
+		Devices: DeviceConfig{
+			Patterns: []string{"/dev/rbln*", "/dev/rsd*"},
+		},
 		Tools: []string{"rbln-smi", "rbln-stat", "rblnBandwidthLatencyTest"},
 		SearchPaths: SearchPathConfig{
 			Libraries: []string{
