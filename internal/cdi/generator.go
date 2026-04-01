@@ -104,6 +104,11 @@ func (g *generator) createContainerEdits(result *discover.DiscoveryResult) specs
 			edits.Mounts = append(edits.Mounts, &mount)
 		}
 
+		for _, dev := range result.Devices {
+			deviceNode := g.createDeviceNode(dev)
+			edits.DeviceNodes = append(edits.DeviceNodes, &deviceNode)
+		}
+
 		// create-symlinks hook MUST come before update-ldcache hook
 		symlinkSpecs := g.computeSymlinks(result.Libraries)
 		if hook := g.createSymlinkHook(symlinkSpecs); hook != nil {
@@ -118,6 +123,15 @@ func (g *generator) createContainerEdits(result *discover.DiscoveryResult) specs
 	}
 
 	return edits
+}
+
+// createDeviceNode creates a CDI device node spec from a discovered device.
+func (g *generator) createDeviceNode(dev discover.Device) specs.DeviceNode {
+	return specs.DeviceNode{
+		Path:        dev.ContainerPath,
+		HostPath:    dev.Path,
+		Permissions: "rw",
+	}
 }
 
 // createLibraryMount creates a bind mount for a library using its ContainerPath.

@@ -17,7 +17,7 @@ limitations under the License.
 // Package discover provides library and tool discovery functionality.
 package discover
 
-//go:generate moq -rm -fmt=goimports -stub -out discoverer_mock.go . Discoverer LibraryDiscoverer ToolDiscoverer
+//go:generate moq -rm -fmt=goimports -stub -out discoverer_mock.go . Discoverer LibraryDiscoverer ToolDiscoverer DeviceDiscoverer
 
 // LibraryType represents the type of a discovered library.
 type LibraryType int
@@ -61,10 +61,17 @@ type Tool struct {
 	ContainerPath string // Path as seen inside container (without driver-root prefix)
 }
 
+// Device represents a discovered device node (e.g., /dev/rbln0).
+type Device struct {
+	Path          string // Absolute path on host (e.g., /dev/rbln0)
+	ContainerPath string // Path as seen inside container (usually same as host)
+}
+
 // DiscoveryResult holds the complete discovery result.
 type DiscoveryResult struct {
 	Libraries []Library
 	Tools     []Tool
+	Devices   []Device
 }
 
 // Discoverer is the interface for resource discovery.
@@ -89,4 +96,10 @@ type LibraryDiscoverer interface {
 type ToolDiscoverer interface {
 	// Discover discovers the configured tools.
 	Discover() ([]Tool, error)
+}
+
+// DeviceDiscoverer discovers device nodes.
+type DeviceDiscoverer interface {
+	// Discover discovers device nodes (e.g., /dev/rbln*, /dev/rsd*).
+	Discover() ([]Device, error)
 }

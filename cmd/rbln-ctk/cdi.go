@@ -174,8 +174,9 @@ func runCDIList(_ *cobra.Command, _ []string) error {
 
 	libDiscoverer := discover.NewLibraryDiscoverer(cfg)
 	toolDiscoverer := discover.NewToolDiscoverer(cfg)
+	deviceDiscoverer := discover.NewDeviceDiscoverer(cfg)
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, deviceDiscoverer)
 	if err != nil {
 		return fmt.Errorf("discover resources: %w", err)
 	}

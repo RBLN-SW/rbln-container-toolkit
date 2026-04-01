@@ -76,7 +76,7 @@ func TestDiscoverResourcesWithDeps_Success(t *testing.T) {
 		},
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.NoError(t, err)
 	assert.Len(t, result.Libraries, 3)
@@ -91,7 +91,7 @@ func TestDiscoverResourcesWithDeps_RBLNDiscoveryError(t *testing.T) {
 	}
 	toolDiscoverer := &mockToolDiscoverer{}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -106,7 +106,7 @@ func TestDiscoverResourcesWithDeps_PluginDiscoveryError(t *testing.T) {
 	}
 	toolDiscoverer := &mockToolDiscoverer{}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -123,7 +123,7 @@ func TestDiscoverResourcesWithDeps_ToolDiscoveryError(t *testing.T) {
 		err: errors.New("tool not found"),
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -142,7 +142,7 @@ func TestDiscoverResourcesWithDeps_DependencyErrorContinues(t *testing.T) {
 		tools: []discover.Tool{},
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -159,7 +159,7 @@ func TestDiscoverResourcesWithDeps_EmptyResult(t *testing.T) {
 		tools: []discover.Tool{},
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -179,7 +179,7 @@ func TestDiscoverResourcesWithDeps_WithDebugLogging(t *testing.T) {
 		tools: []discover.Tool{},
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -207,7 +207,7 @@ func TestDiscoverResourcesWithDeps_MultipleLibraries(t *testing.T) {
 		},
 	}
 
-	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer)
+	result, err := setup.DiscoverResources(libDiscoverer, toolDiscoverer, nil)
 
 	assert.NoError(t, err)
 	assert.Len(t, result.Libraries, 6)

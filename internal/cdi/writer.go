@@ -39,14 +39,21 @@ type yamlMount struct {
 	Type          string   `yaml:"type,omitempty"`
 }
 
+// yamlDeviceNode is a wrapper for specs.DeviceNode with proper yaml omitempty tags.
+type yamlDeviceNode struct {
+	Path        string `yaml:"path"`
+	HostPath    string `yaml:"hostPath,omitempty"`
+	Permissions string `yaml:"permissions,omitempty"`
+}
+
 // yamlContainerEdits is a wrapper for specs.ContainerEdits with proper yaml omitempty tags.
 type yamlContainerEdits struct {
-	Env            []string     `yaml:"env,omitempty"`
-	DeviceNodes    []any        `yaml:"deviceNodes,omitempty"`
-	Hooks          []any        `yaml:"hooks,omitempty"`
-	Mounts         []*yamlMount `yaml:"mounts,omitempty"`
-	IntelRdt       any          `yaml:"intelRdt,omitempty"`
-	AdditionalGIDs []uint32     `yaml:"additionalGids,omitempty"`
+	Env            []string          `yaml:"env,omitempty"`
+	DeviceNodes    []*yamlDeviceNode `yaml:"deviceNodes,omitempty"`
+	Hooks          []any             `yaml:"hooks,omitempty"`
+	Mounts         []*yamlMount      `yaml:"mounts,omitempty"`
+	IntelRdt       any               `yaml:"intelRdt,omitempty"`
+	AdditionalGIDs []uint32          `yaml:"additionalGids,omitempty"`
 }
 
 // yamlDevice is a wrapper for specs.Device with proper yaml omitempty tags.
@@ -82,6 +89,16 @@ func toYAMLSpec(spec *specs.Spec) yamlSpec {
 			ContainerEdits: yamlContainerEdits{
 				Env: d.ContainerEdits.Env,
 			},
+		}
+
+		// Convert device nodes
+		for _, dn := range d.ContainerEdits.DeviceNodes {
+			ydn := &yamlDeviceNode{
+				Path:        dn.Path,
+				HostPath:    dn.HostPath,
+				Permissions: dn.Permissions,
+			}
+			yd.ContainerEdits.DeviceNodes = append(yd.ContainerEdits.DeviceNodes, ydn)
 		}
 
 		// Convert mounts

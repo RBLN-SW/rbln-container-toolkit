@@ -168,7 +168,7 @@ func TestDiscoverResources_CorrectOrder(t *testing.T) {
 	}
 
 	// When DiscoverResources is called
-	result, err := DiscoverResources(mockLibDisc, nil)
+	result, err := DiscoverResources(mockLibDisc, nil, nil)
 
 	// Then discovery should happen in order: RBLN → Dependencies → Plugins
 	require.NoError(t, err, "DiscoverResources should succeed")
@@ -316,7 +316,7 @@ func TestDiscoverResources_DependencyError(t *testing.T) {
 	}
 
 	// When DiscoverResources is called
-	result, err := DiscoverResources(mockLibDisc, nil)
+	result, err := DiscoverResources(mockLibDisc, nil, nil)
 
 	// Then an error should be returned
 	assert.Error(t, err)
@@ -333,7 +333,7 @@ func TestDiscoverResources_PluginError(t *testing.T) {
 	}
 
 	// When DiscoverResources is called
-	result, err := DiscoverResources(mockLibDisc, nil)
+	result, err := DiscoverResources(mockLibDisc, nil, nil)
 
 	// Then an error should be returned
 	assert.Error(t, err)
@@ -353,7 +353,7 @@ func TestDiscoverResources_ToolError(t *testing.T) {
 	}
 
 	// When DiscoverResources is called
-	result, err := DiscoverResources(mockLibDisc, mockToolDisc)
+	result, err := DiscoverResources(mockLibDisc, mockToolDisc, nil)
 
 	// Then an error should be returned
 	assert.Error(t, err)
@@ -375,7 +375,7 @@ func TestDiscoverResources_WithTools(t *testing.T) {
 	}
 
 	// When DiscoverResources is called
-	result, err := DiscoverResources(mockLibDisc, mockToolDisc)
+	result, err := DiscoverResources(mockLibDisc, mockToolDisc, nil)
 
 	// Then result should contain both libraries and tools
 	require.NoError(t, err)

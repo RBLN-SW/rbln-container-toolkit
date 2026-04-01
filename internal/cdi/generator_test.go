@@ -1358,3 +1358,82 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	}
 	assert.True(t, debugEnvFound, "RBLN_CDI_HOOK_DEBUG env var should exist")
 }
+
+func TestGenerator_Generate_WithDevices(t *testing.T) {
+	// Given
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rbln1", ContainerPath: "/dev/rbln1"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then
+	require.NoError(t, err)
+	require.Len(t, spec.Devices, 1)
+
+	edits := spec.Devices[0].ContainerEdits
+	require.Len(t, edits.DeviceNodes, 3)
+
+	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].Path)
+	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].HostPath)
+	assert.Equal(t, "rw", edits.DeviceNodes[0].Permissions)
+
+	assert.Equal(t, "/dev/rbln1", edits.DeviceNodes[1].Path)
+	assert.Equal(t, "/dev/rsd0", edits.DeviceNodes[2].Path)
+}
+
+func TestGenerator_Generate_WithDevices_DriverRoot(t *testing.T) {
+	// Given: Devices with different host and container paths
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/run/rbln/driver/dev/rbln0", ContainerPath: "/dev/rbln0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.DriverRoot = "/run/rbln/driver"
+	gen := NewGenerator(cfg)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then
+	require.NoError(t, err)
+	edits := spec.Devices[0].ContainerEdits
+	require.Len(t, edits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].Path)
+	assert.Equal(t, "/run/rbln/driver/dev/rbln0", edits.DeviceNodes[0].HostPath)
+}
+
+func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
+	// Given
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg)
+	writer := NewWriter()
+
+	// When
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	err = writer.WriteToWriter(spec, &buf, "yaml")
+	require.NoError(t, err)
+
+	// Then: YAML output should contain deviceNodes
+	output := buf.String()
+	assert.Contains(t, output, "deviceNodes:")
+	assert.Contains(t, output, "path: /dev/rbln0")
+	assert.Contains(t, output, "hostPath: /dev/rbln0")
+	assert.Contains(t, output, "permissions: rw")
+}

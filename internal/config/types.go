@@ -22,6 +22,7 @@ type Config struct {
 	CDI          CDIConfig        `yaml:"cdi"`
 	Libraries    LibraryConfig    `yaml:"libraries"`
 	Tools        []string         `yaml:"tools"`
+	Devices      DeviceConfig     `yaml:"devices"`
 	SearchPaths  SearchPathConfig `yaml:"search-paths"`
 	GlibcExclude []string         `yaml:"glibc-exclude"`
 	SELinux      SELinuxConfig    `yaml:"selinux"`
@@ -69,6 +70,12 @@ type SELinuxConfig struct {
 	// Values: "z" (shared), "Z" (private), or empty (disabled)
 	// Default: "z" (shared) which allows multiple containers to access the mount.
 	MountContext string `yaml:"mount-context"`
+}
+
+// DeviceConfig represents device node discovery settings.
+type DeviceConfig struct {
+	// Patterns are glob patterns to discover device nodes (e.g., "/dev/rbln*").
+	Patterns []string `yaml:"patterns"`
 }
 
 // HookConfig represents CDI hook settings.
