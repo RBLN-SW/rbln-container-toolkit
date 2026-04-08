@@ -23,12 +23,13 @@ import (
 
 // Runtime command flags (shared across runtime subcommands)
 var (
-	restartMode   string
-	hostRootMount string
-	socketPath    string
-	cdiSpecDir    string
-	pidFile       string
-	dryRun        bool
+	restartMode    string
+	hostRootMount  string
+	socketPath     string
+	cdiSpecDir     string
+	runtimeCfgPath string
+	pidFile        string
+	dryRun         bool
 )
 
 func newRuntimeCmd() *cobra.Command {
@@ -43,6 +44,7 @@ func newRuntimeCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&hostRootMount, "host-root-mount", "", "Host root mount path for containerized deployment [$RBLN_CTK_DAEMON_HOST_ROOT_MOUNT]")
 	cmd.PersistentFlags().StringVar(&socketPath, "socket", "", "Runtime socket path (default: per-runtime) [$RBLN_CTK_DAEMON_SOCKET]")
 	cmd.PersistentFlags().StringVar(&cdiSpecDir, "cdi-spec-dir", "/var/run/cdi", "CDI spec output directory [$RBLN_CTK_DAEMON_CDI_SPEC_DIR]")
+	cmd.PersistentFlags().StringVar(&runtimeCfgPath, "config-path", "", "Runtime config path override (default: per-runtime) [$RBLN_CTK_DAEMON_CONFIG_PATH]")
 	cmd.PersistentFlags().StringVar(&pidFile, "pid-file", "/run/rbln/toolkit.pid", "PID file path for locking [$RBLN_CTK_DAEMON_PID_FILE]")
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes without applying them")
 
@@ -51,6 +53,7 @@ func newRuntimeCmd() *cobra.Command {
 	_ = viper.BindPFlag("host_root_mount", cmd.PersistentFlags().Lookup("host-root-mount"))
 	_ = viper.BindPFlag("socket", cmd.PersistentFlags().Lookup("socket"))
 	_ = viper.BindPFlag("cdi_spec_dir", cmd.PersistentFlags().Lookup("cdi-spec-dir"))
+	_ = viper.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config-path"))
 	_ = viper.BindPFlag("pid_file", cmd.PersistentFlags().Lookup("pid-file"))
 
 	// Add runtime-specific subcommands
@@ -102,6 +105,14 @@ func getEffectiveCDISpecDir() string {
 		return envValue
 	}
 	return "/var/run/cdi"
+}
+
+// getEffectiveConfigPath returns the runtime config path override.
+func getEffectiveConfigPath() string {
+	if runtimeCfgPath != "" {
+		return runtimeCfgPath
+	}
+	return viper.GetString("config_path")
 }
 
 // getEffectivePidFile returns the PID file path.

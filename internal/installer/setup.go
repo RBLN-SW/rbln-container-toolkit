@@ -39,6 +39,7 @@ type SetupOptions struct {
 	Socket        string
 	HostRootMount string
 	CDISpecDir    string
+	ConfigPath    string // Runtime config path override (empty = per-runtime default)
 	PidFile       string
 	DryRun        bool
 	Logger        Logger
@@ -73,7 +74,7 @@ func Setup(opts SetupOptions) error {
 	}
 
 	// Adjust paths for host root mount
-	configPath := getConfigPath(opts.Runtime, opts.HostRootMount)
+	configPath := getConfigPath(opts.Runtime, opts.HostRootMount, opts.ConfigPath)
 	socketPath := opts.Socket
 	socketUserProvided := opts.Socket != ""
 	cdiSpecDir := opts.CDISpecDir
@@ -167,17 +168,21 @@ func dryRunSetup(opts SetupOptions, configPath, socketPath, cdiSpecDir string, l
 	return nil
 }
 
-func getConfigPath(runtimeName, hostRootMount string) string {
+func getConfigPath(runtimeName, hostRootMount, configPathOverride string) string {
 	var configPath string
-	switch runtimeName {
-	case "docker":
-		configPath = "/etc/docker/daemon.json"
-	case "containerd":
-		configPath = "/etc/containerd/config.toml"
-	case "crio":
-		configPath = "/etc/crio/crio.conf.d/99-rbln.conf"
-	default:
-		configPath = fmt.Sprintf("/etc/%s/config", runtimeName)
+	if configPathOverride != "" {
+		configPath = configPathOverride
+	} else {
+		switch runtimeName {
+		case "docker":
+			configPath = "/etc/docker/daemon.json"
+		case "containerd":
+			configPath = "/etc/containerd/config.toml"
+		case "crio":
+			configPath = "/etc/crio/crio.conf.d/99-rbln.conf"
+		default:
+			configPath = fmt.Sprintf("/etc/%s/config", runtimeName)
+		}
 	}
 
 	if hostRootMount != "" {
