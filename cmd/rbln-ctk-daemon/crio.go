@@ -95,6 +95,7 @@ func runCrioSetup() error {
 		Socket:        "", // Not used for CRI-O (systemd only)
 		HostRootMount: getEffectiveHostRootMount(),
 		CDISpecDir:    getEffectiveCDISpecDir(),
+		ConfigPath:    getEffectiveConfigPath(),
 		PidFile:       getEffectivePidFile(),
 		DryRun:        dryRun,
 		Logger:        &cliLogger{},
@@ -122,6 +123,7 @@ func runCrioCleanup() error {
 		Socket:        "", // Not used for CRI-O (systemd only)
 		HostRootMount: getEffectiveHostRootMount(),
 		CDISpecDir:    getEffectiveCDISpecDir(),
+		ConfigPath:    getEffectiveConfigPath(),
 		PidFile:       getEffectivePidFile(),
 		DryRun:        dryRun,
 		Logger:        &cliLogger{},

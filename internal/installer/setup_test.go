@@ -50,10 +50,11 @@ func TestSetupOptions_Defaults(t *testing.T) {
 
 func TestGetConfigPath(t *testing.T) {
 	tests := []struct {
-		name          string
-		runtime       string
-		hostRootMount string
-		expected      string
+		name               string
+		runtime            string
+		hostRootMount      string
+		configPathOverride string
+		expected           string
 	}{
 		{
 			name:     "docker without host mount",
@@ -87,12 +88,44 @@ func TestGetConfigPath(t *testing.T) {
 			hostRootMount: "/custom/host",
 			expected:      "/custom/host/etc/containerd/config.toml",
 		},
+		{
+			name:               "override replaces default for containerd",
+			runtime:            "containerd",
+			configPathOverride: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			expected:           "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+		},
+		{
+			name:               "override replaces default for docker",
+			runtime:            "docker",
+			configPathOverride: "/custom/docker/daemon.json",
+			expected:           "/custom/docker/daemon.json",
+		},
+		{
+			name:               "override with host mount applies prefix",
+			runtime:            "containerd",
+			hostRootMount:      "/host",
+			configPathOverride: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			expected:           "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+		},
+		{
+			name:               "override with custom host mount applies prefix",
+			runtime:            "containerd",
+			hostRootMount:      "/custom/host",
+			configPathOverride: "/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
+			expected:           "/custom/host/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
+		},
+		{
+			name:               "override ignores runtime default entirely",
+			runtime:            "containerd",
+			configPathOverride: "/var/snap/microk8s/current/args/containerd-template.toml",
+			expected:           "/var/snap/microk8s/current/args/containerd-template.toml",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// When
-			result := getConfigPath(tt.runtime, tt.hostRootMount)
+			result := getConfigPath(tt.runtime, tt.hostRootMount, tt.configPathOverride)
 
 			// Then
 			assert.Equal(t, tt.expected, result)
@@ -202,7 +235,7 @@ func TestDryRunSetup_OutputsExpectedActions(t *testing.T) {
 			// When
 			err := dryRunSetup(
 				SetupOptions{Runtime: tt.runtime, RestartMode: tt.restartMode},
-				getConfigPath(tt.runtime, ""),
+				getConfigPath(tt.runtime, "", ""),
 				"/var/run/docker.sock",
 				"/var/run/cdi",
 				logger,

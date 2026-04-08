@@ -87,6 +87,7 @@ Flags:
 	cmd.Flags().String("cdi-spec-dir", "/var/run/cdi", "CDI specification directory [$RBLN_CTK_DAEMON_CDI_SPEC_DIR]")
 	cmd.Flags().String("container-library-path", "", "Container library path for isolation (enables LD_LIBRARY_PATH) [$RBLN_CTK_DAEMON_CONTAINER_LIBRARY_PATH]")
 	cmd.Flags().String("socket", "", "Runtime socket path (auto-detect if empty) [$RBLN_CTK_DAEMON_SOCKET]")
+	cmd.Flags().String("config-path", "", "Runtime config path override (default: per-runtime) [$RBLN_CTK_DAEMON_CONFIG_PATH]")
 	cmd.Flags().BoolP("debug", "d", false, "Enable debug logging [$RBLN_CTK_DAEMON_DEBUG]")
 	cmd.Flags().BoolP("force", "f", false, "Terminate existing instance before starting [$RBLN_CTK_DAEMON_FORCE]")
 
@@ -102,6 +103,7 @@ Flags:
 	_ = viper.BindPFlag("cdi_spec_dir", cmd.Flags().Lookup("cdi-spec-dir"))
 	_ = viper.BindPFlag("container_library_path", cmd.Flags().Lookup("container-library-path"))
 	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
+	_ = viper.BindPFlag("config_path", cmd.Flags().Lookup("config-path"))
 	_ = viper.BindPFlag("debug", cmd.Flags().Lookup("debug"))
 	_ = viper.BindPFlag("force", cmd.Flags().Lookup("force"))
 
@@ -132,6 +134,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	cdiDir := viper.GetString("cdi_spec_dir")
 	containerLibraryPath := viper.GetString("container_library_path")
 	socketPath := viper.GetString("socket")
+	configPath := viper.GetString("config_path")
 	debugFlag := viper.GetBool("debug")
 
 	// Auto-detect host root mount path
@@ -175,7 +178,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	}
 
 	cleanup := func() error {
-		return doCleanup(rt, cdiDir)
+		return doCleanup(rt, cdiDir, hostRoot, configPath)
 	}
 
 	d := daemon.NewDaemon(cfg, cleanup)
@@ -185,7 +188,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = d.ReleasePIDLock() }()
 
-	if err := setup(rt, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath); err != nil {
+	if err := setup(rt, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
@@ -210,7 +213,7 @@ func (l *daemonLogger) Debug(msg string, args ...interface{}) {
 	}
 }
 
-func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath string) error {
+func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath string) error {
 	if hostRoot != "/" && hostRoot != "" {
 		if err := installHookBinary(hostRoot); err != nil {
 			log.Printf("WARNING: Failed to install hook binary: %v", err)
@@ -252,7 +255,8 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 
 	// Configure runtime
 	log.Println("INFO: Configuring runtime...")
-	configPath := runtime.DefaultConfigPath(rt)
+	configPath = resolveConfigPath(rt, hostRoot, configPath)
+	log.Printf("INFO: Using runtime config path: %s", configPath)
 	configurator, err := runtime.NewConfigurator(rt, configPath, nil)
 	if err != nil {
 		return fmt.Errorf("create configurator: %w", err)
@@ -301,7 +305,7 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 	return nil
 }
 
-func doCleanup(rt runtime.RuntimeType, cdiDir string) error {
+func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string) error {
 	log.Println("INFO: Removing CDI specification...")
 
 	// Remove CDI spec
@@ -313,7 +317,7 @@ func doCleanup(rt runtime.RuntimeType, cdiDir string) error {
 	log.Println("INFO: Reverting runtime configuration...")
 
 	// Revert runtime config (restore backup)
-	configPath := runtime.DefaultConfigPath(rt)
+	configPath = resolveConfigPath(rt, hostRoot, configPath)
 	backupPath := configPath + ".backup"
 
 	if _, err := os.Stat(backupPath); err == nil {
@@ -332,12 +336,18 @@ func doCleanup(rt runtime.RuntimeType, cdiDir string) error {
 	restartMode := defaults.Mode
 	socketPath := defaults.Socket
 
+	// Apply host root prefix for containerized deployments
+	if hostRoot != "" && hostRoot != "/" {
+		socketPath = filepath.Join(hostRoot, socketPath)
+	}
+
 	restartOpts := restart.Options{
-		Mode:         restartMode,
-		Socket:       socketPath,
-		MaxRetries:   3,
-		RetryBackoff: 5 * 1e9, // 5 seconds in nanoseconds
-		Timeout:      30 * 1e9,
+		Mode:          restartMode,
+		Socket:        socketPath,
+		HostRootMount: hostRoot,
+		MaxRetries:    3,
+		RetryBackoff:  5 * 1e9, // 5 seconds in nanoseconds
+		Timeout:       30 * 1e9,
 	}
 	restarter, err := restart.NewRestarter(restartOpts)
 	if err != nil {
@@ -369,6 +379,19 @@ func logWarning(format string, args ...interface{}) {
 
 func logError(format string, args ...interface{}) {
 	log.Printf("ERROR: "+format, args...)
+}
+
+// resolveConfigPath returns the effective runtime config path.
+// If configPath is empty, it falls back to the per-runtime default.
+// If hostRoot is set (containerized deployment), the path is prefixed with hostRoot.
+func resolveConfigPath(rt runtime.RuntimeType, hostRoot, configPath string) string {
+	if configPath == "" {
+		configPath = runtime.DefaultConfigPath(rt)
+	}
+	if hostRoot != "/" && hostRoot != "" {
+		configPath = filepath.Join(hostRoot, configPath)
+	}
+	return configPath
 }
 
 func detectHostRoot(flagValue string) string {

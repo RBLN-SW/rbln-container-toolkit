@@ -125,7 +125,7 @@ func TestDryRunCleanup_OutputsExpectedActions(t *testing.T) {
 			// When
 			err := dryRunCleanup(
 				CleanupOptions{Runtime: tt.runtime, RestartMode: tt.restartMode},
-				getConfigPath(tt.runtime, ""),
+				getConfigPath(tt.runtime, "", ""),
 				"/var/run/docker.sock",
 				"/var/run/cdi",
 				logger,

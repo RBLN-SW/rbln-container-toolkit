@@ -32,6 +32,7 @@ type CleanupOptions struct {
 	Socket        string
 	HostRootMount string
 	CDISpecDir    string
+	ConfigPath    string // Runtime config path override (empty = per-runtime default)
 	PidFile       string
 	DryRun        bool
 	Logger        Logger
@@ -59,7 +60,7 @@ func Cleanup(opts CleanupOptions) error {
 	}
 
 	// Adjust paths for host root mount
-	configPath := getConfigPath(opts.Runtime, opts.HostRootMount)
+	configPath := getConfigPath(opts.Runtime, opts.HostRootMount, opts.ConfigPath)
 	socketPath := opts.Socket
 	socketUserProvided := opts.Socket != ""
 	cdiSpecDir := opts.CDISpecDir

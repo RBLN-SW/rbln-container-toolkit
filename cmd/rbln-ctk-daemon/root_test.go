@@ -262,7 +262,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -276,7 +276,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -289,7 +289,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -303,11 +303,11 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 		assert.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -325,7 +325,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -345,7 +345,7 @@ func TestDoCleanup(t *testing.T) {
 		defer os.Chmod(tmpDir, 0755)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -364,7 +364,7 @@ func TestDoCleanup(t *testing.T) {
 				require.NoError(t, err)
 
 				// When
-				err = doCleanup(rt, tmpDir)
+				err = doCleanup(rt, tmpDir, "/", "")
 
 				// Then
 				assert.NoError(t, err)
@@ -382,7 +382,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -397,7 +397,7 @@ func TestDoCleanup(t *testing.T) {
 		defer os.Chmod(backupPath, 0644)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -408,7 +408,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -426,7 +426,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir)
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
 
 		// Then
 		assert.NoError(t, err)
@@ -434,6 +434,167 @@ func TestDoCleanup(t *testing.T) {
 		assert.True(t, os.IsNotExist(err))
 		_, err = os.Stat(otherFile)
 		assert.NoError(t, err)
+	})
+}
+
+func TestResolveConfigPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		rt         runtime.RuntimeType
+		hostRoot   string
+		configPath string
+		expected   string
+	}{
+		{
+			name:       "empty configPath falls back to containerd default",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "/",
+			configPath: "",
+			expected:   "/etc/containerd/config.toml",
+		},
+		{
+			name:       "empty configPath falls back to docker default",
+			rt:         runtime.RuntimeDocker,
+			hostRoot:   "/",
+			configPath: "",
+			expected:   "/etc/docker/daemon.json",
+		},
+		{
+			name:       "empty configPath falls back to crio default",
+			rt:         runtime.RuntimeCRIO,
+			hostRoot:   "/",
+			configPath: "",
+			expected:   "/etc/crio/crio.conf.d/99-rbln.conf",
+		},
+		{
+			name:       "configPath override is used as-is",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "/",
+			configPath: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			expected:   "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+		},
+		{
+			name:       "hostRoot prefix applied to default path",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "/host",
+			configPath: "",
+			expected:   "/host/etc/containerd/config.toml",
+		},
+		{
+			name:       "hostRoot prefix applied to override path",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "/host",
+			configPath: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			expected:   "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+		},
+		{
+			name:       "empty hostRoot does not add prefix",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "",
+			configPath: "/etc/containerd/config.toml",
+			expected:   "/etc/containerd/config.toml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := resolveConfigPath(tt.rt, tt.hostRoot, tt.configPath)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
+	t.Run("uses override config path for backup restoration", func(t *testing.T) {
+		// Given: a tmpDir simulating host root with custom config path
+		tmpDir := t.TempDir()
+		customConfigDir := filepath.Join(tmpDir, "var", "lib", "rancher", "rke2", "agent", "etc", "containerd")
+		require.NoError(t, os.MkdirAll(customConfigDir, 0o755))
+
+		configFile := filepath.Join(customConfigDir, "config.toml")
+		backupFile := configFile + ".backup"
+		require.NoError(t, os.WriteFile(configFile, []byte("modified config"), 0o644))
+		require.NoError(t, os.WriteFile(backupFile, []byte("original config"), 0o644))
+
+		cdiDir := filepath.Join(tmpDir, "cdi")
+		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
+
+		// When: cleanup with override config path pointing to the full path (no hostRoot prefix needed)
+		err := doCleanup(
+			runtime.RuntimeContainerd,
+			cdiDir,
+			"/",
+			configFile,
+		)
+
+		// Then: backup should be restored
+		assert.NoError(t, err)
+		content, err := os.ReadFile(configFile)
+		require.NoError(t, err)
+		assert.Equal(t, "original config", string(content))
+
+		// backup file should be removed
+		_, err = os.Stat(backupFile)
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("applies hostRoot prefix to override config path", func(t *testing.T) {
+		// Given: simulate /host mount with custom containerd config path
+		tmpDir := t.TempDir()
+		hostRoot := tmpDir // tmpDir acts as /host
+
+		customConfigPath := "/var/lib/rancher/rke2/agent/etc/containerd/config.toml"
+		fullConfigPath := filepath.Join(hostRoot, customConfigPath)
+		require.NoError(t, os.MkdirAll(filepath.Dir(fullConfigPath), 0o755))
+
+		require.NoError(t, os.WriteFile(fullConfigPath, []byte("modified"), 0o644))
+		require.NoError(t, os.WriteFile(fullConfigPath+".backup", []byte("original"), 0o644))
+
+		cdiDir := filepath.Join(tmpDir, "cdi")
+		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
+
+		// When: cleanup with hostRoot and override config path
+		err := doCleanup(
+			runtime.RuntimeContainerd,
+			cdiDir,
+			hostRoot,
+			customConfigPath,
+		)
+
+		// Then: backup at hostRoot-prefixed path should be restored
+		assert.NoError(t, err)
+		content, err := os.ReadFile(fullConfigPath)
+		require.NoError(t, err)
+		assert.Equal(t, "original", string(content))
+	})
+
+	t.Run("applies hostRoot prefix to default config path", func(t *testing.T) {
+		// Given: simulate /host mount with default containerd config
+		tmpDir := t.TempDir()
+		hostRoot := tmpDir
+
+		defaultConfigPath := filepath.Join(hostRoot, "etc", "containerd", "config.toml")
+		require.NoError(t, os.MkdirAll(filepath.Dir(defaultConfigPath), 0o755))
+
+		require.NoError(t, os.WriteFile(defaultConfigPath, []byte("modified"), 0o644))
+		require.NoError(t, os.WriteFile(defaultConfigPath+".backup", []byte("original"), 0o644))
+
+		cdiDir := filepath.Join(tmpDir, "cdi")
+		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
+
+		// When: cleanup with hostRoot but no config path override (empty = default)
+		err := doCleanup(
+			runtime.RuntimeContainerd,
+			cdiDir,
+			hostRoot,
+			"",
+		)
+
+		// Then: backup at hostRoot + default path should be restored
+		assert.NoError(t, err)
+		content, err := os.ReadFile(defaultConfigPath)
+		require.NoError(t, err)
+		assert.Equal(t, "original", string(content))
 	})
 }
 
