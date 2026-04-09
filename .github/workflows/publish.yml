@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   mirror:
@@ -18,7 +18,6 @@ jobs:
     timeout-minutes: 10
     env:
       PUBLIC_REPO_DEPLOY_KEY: ${{ secrets.PUBLIC_REPO_DEPLOY_KEY }}
-      PUBLIC_REPO_PAT: ${{ secrets.PUBLIC_REPO_PAT }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,17 +25,3 @@ jobs:
           fetch-depth: 0
       - name: Mirror push
         run: ./hack/release-mirror.sh "${{ inputs.tag }}"
-
-  github-release:
-    name: Create GitHub Release
-    needs: mirror
-    runs-on: ubuntu-22.04-rbln
-    timeout-minutes: 10
-    env:
-      GH_TOKEN: ${{ secrets.PUBLIC_REPO_PAT }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
-      - name: Create release
-        run: ./hack/release-github.sh "${{ inputs.tag }}"
