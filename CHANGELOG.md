@@ -1,5 +1,11 @@
 # RBLN Container Toolkit Changelog
 
+## v0.1.1
+
+- Add device node discovery and CDI spec generation for RBLN NPU devices
+- Add `RBLN_CTK_DAEMON_CONFIG_PATH` environment variable for runtime config override
+- Add release workflow with script delegation pattern (tag-triggered CI/CD pipeline)
+
 ## v0.1.0
 
 - Initial open-source release of rbln-container-toolkit

@@ -65,7 +65,7 @@ for pkg in dist/*.deb; do
         --netrc-file <(printf "machine %s\nlogin %s\npassword %s\n" \
             "${NEXUS_HOST}" "${NEXUS_USERNAME}" "${NEXUS_PASSWORD}") \
         --upload-file "${pkg}" \
-        "${NEXUS_URL}/repository/rbln-ctk-deb-${REPO_SUFFIX}/$(basename "${pkg}")"
+        "${NEXUS_URL}/repository/rbln-container-toolkit/deb/${REPO_SUFFIX}/$(basename "${pkg}")"
 done
 
 for pkg in dist/*.rpm; do
@@ -75,7 +75,7 @@ for pkg in dist/*.rpm; do
         --netrc-file <(printf "machine %s\nlogin %s\npassword %s\n" \
             "${NEXUS_HOST}" "${NEXUS_USERNAME}" "${NEXUS_PASSWORD}") \
         --upload-file "${pkg}" \
-        "${NEXUS_URL}/repository/rbln-ctk-rpm-${REPO_SUFFIX}/$(basename "${pkg}")"
+        "${NEXUS_URL}/repository/rbln-container-toolkit/rpm/${REPO_SUFFIX}/$(basename "${pkg}")"
 done
 
 echo "==> Nexus upload complete"

@@ -37,9 +37,9 @@ jobs:
     runs-on: ubuntu-22.04-rbln
     timeout-minutes: 20
     env:
-      NEXUS_URL: ${{ secrets.NEXUS_URL }}
-      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+      NEXUS_URL: ${{ secrets.SSW_NEXUS_CE_URL }}
+      NEXUS_USERNAME: ${{ secrets.SSW_NEXUS_CE_USERNAME }}
+      NEXUS_PASSWORD: ${{ secrets.SSW_NEXUS_CE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -65,8 +65,9 @@ jobs:
     runs-on: ubuntu-22.04-rbln
     timeout-minutes: 20
     env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SSW_HARBOR_URL: ${{ secrets.SSW_HARBOR_URL }}
+      SSW_HARBOR_USERNAME: ${{ secrets.SSW_HARBOR_USERNAME }}
+      SSW_HARBOR_PASSWORD: ${{ secrets.SSW_HARBOR_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
