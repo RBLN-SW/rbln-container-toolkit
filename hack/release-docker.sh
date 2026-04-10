@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release-docker.sh — Build and push Docker image to DockerHub.
+# release-docker.sh — Build and push Docker image to Harbor registry.
 #
 # Usage: ./hack/release-docker.sh <tag> [dry_run]
 #   tag:     Git tag (e.g., v0.2.0, v0.2.0-rc.1)
@@ -14,7 +14,10 @@ TAG="${1:?Usage: $0 <tag> [dry_run]}"
 DRY_RUN="${2:-false}"
 # Treat empty string as non-dry-run (tag push trigger has no inputs)
 [ -z "${DRY_RUN}" ] && DRY_RUN="false"
+# Strip protocol prefix if present (e.g., https://harbor.example.com → harbor.example.com)
 REGISTRY="${SSW_HARBOR_URL:?SSW_HARBOR_URL is not set}"
+REGISTRY="${REGISTRY#https://}"
+REGISTRY="${REGISTRY#http://}"
 IMAGE="${REGISTRY}/rebellions/rbln-container-toolkit"
 DOCKERFILE="deployments/container/Dockerfile"
 GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
