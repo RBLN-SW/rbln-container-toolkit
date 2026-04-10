@@ -46,36 +46,31 @@ if [ -z "${NEXUS_URL:-}" ] || [ -z "${NEXUS_USERNAME:-}" ] || [ -z "${NEXUS_PASS
     exit 0
 fi
 
-# RC tags go to test repo, release tags go to prod repo
+# RC tags go to testing, release tags go to stable
 if [[ "${TAG}" == *-rc* ]]; then
-    REPO_SUFFIX="test"
+    DISTRIBUTION="testing"
 else
-    REPO_SUFFIX="prod"
+    DISTRIBUTION="stable"
 fi
 
-# Extract hostname from NEXUS_URL for netrc
-NEXUS_HOST="$(echo "${NEXUS_URL}" | sed 's|https\?://||' | sed 's|/.*||')"
-
-echo "==> Uploading to Nexus (${REPO_SUFFIX})..."
+echo "==> Uploading to Nexus (${DISTRIBUTION})..."
 
 for pkg in dist/*.deb; do
     [ -f "${pkg}" ] || continue
-    echo "  Uploading $(basename "${pkg}")..."
+    echo "  Uploading $(basename "${pkg}") to apt-internal (${DISTRIBUTION})..."
     curl --fail \
-        --netrc-file <(printf "machine %s\nlogin %s\npassword %s\n" \
-            "${NEXUS_HOST}" "${NEXUS_USERNAME}" "${NEXUS_PASSWORD}") \
-        --upload-file "${pkg}" \
-        "${NEXUS_URL}/repository/rbln-container-toolkit/deb/${REPO_SUFFIX}/$(basename "${pkg}")"
+        -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
+        -F "apt.asset=@${pkg}" \
+        "${NEXUS_URL}/service/rest/v1/components?repository=apt-internal"
 done
 
 for pkg in dist/*.rpm; do
     [ -f "${pkg}" ] || continue
-    echo "  Uploading $(basename "${pkg}")..."
+    echo "  Uploading $(basename "${pkg}") to yum-internal (${DISTRIBUTION})..."
     curl --fail \
-        --netrc-file <(printf "machine %s\nlogin %s\npassword %s\n" \
-            "${NEXUS_HOST}" "${NEXUS_USERNAME}" "${NEXUS_PASSWORD}") \
+        -u "${NEXUS_USERNAME}:${NEXUS_PASSWORD}" \
         --upload-file "${pkg}" \
-        "${NEXUS_URL}/repository/rbln-container-toolkit/rpm/${REPO_SUFFIX}/$(basename "${pkg}")"
+        "${NEXUS_URL}/repository/yum-internal/${DISTRIBUTION}/$(basename "${pkg}")"
 done
 
 echo "==> Nexus upload complete"

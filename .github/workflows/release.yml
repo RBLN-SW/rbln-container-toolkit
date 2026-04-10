@@ -16,7 +16,7 @@ permissions:
 jobs:
   build-and-test:
     name: Build & Test
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
   package:
     name: Package & Upload
     needs: build-and-test
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 20
     env:
       NEXUS_URL: ${{ secrets.SSW_NEXUS_CE_URL }}
@@ -62,7 +62,7 @@ jobs:
   docker:
     name: Docker Build & Push
     needs: build-and-test
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 20
     env:
       SSW_HARBOR_URL: ${{ secrets.SSW_HARBOR_URL }}

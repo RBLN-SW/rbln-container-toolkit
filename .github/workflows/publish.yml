@@ -14,7 +14,7 @@ permissions:
 jobs:
   mirror:
     name: Mirror to Public Repo
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 10
     env:
       PUBLIC_REPO_DEPLOY_KEY: ${{ secrets.PUBLIC_REPO_DEPLOY_KEY }}

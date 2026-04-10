@@ -12,7 +12,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +27,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +40,7 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-22.04-rbln
+    runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
 
