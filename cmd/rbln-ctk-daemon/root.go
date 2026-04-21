@@ -137,6 +137,10 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	configPath := viper.GetString("config_path")
 	debugFlag := viper.GetBool("debug")
 
+	if configPath != "" && !filepath.IsAbs(configPath) {
+		return fmt.Errorf("config path override must be absolute: %q", configPath)
+	}
+
 	// Auto-detect host root mount path
 	hostRoot = detectHostRoot(hostRoot)
 	log.Printf("INFO: Using host root mount: %s", hostRoot)
@@ -382,12 +386,19 @@ func logError(format string, args ...interface{}) {
 }
 
 // resolveConfigPath returns the effective runtime config path.
-// If configPath is empty, it falls back to the per-runtime default.
-// If hostRoot is set (containerized deployment), the path is prefixed with hostRoot.
+//
+// When configPath is set, it is used as-is — the caller is responsible
+// for ensuring it points to a writable location inside the daemon's
+// filesystem. hostRoot is NOT prefixed to an override.
+//
+// When configPath is empty, the runtime's default host path is used and
+// hostRoot is prefixed so the daemon can reach the host config through
+// its host-root bind mount.
 func resolveConfigPath(rt runtime.RuntimeType, hostRoot, configPath string) string {
-	if configPath == "" {
-		configPath = runtime.DefaultConfigPath(rt)
+	if configPath != "" {
+		return configPath
 	}
+	configPath = runtime.DefaultConfigPath(rt)
 	if hostRoot != "/" && hostRoot != "" {
 		configPath = filepath.Join(hostRoot, configPath)
 	}

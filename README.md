@@ -221,6 +221,7 @@ kubectl apply -f deployments/kubernetes/daemonset.yaml
 | `RBLN_CTK_DAEMON_HOST_ROOT` | Host root mount path | `/` (host), `/host` (container) |
 | `RBLN_CTK_DAEMON_DRIVER_ROOT` | Driver root path for CDI spec | `/` |
 | `RBLN_CTK_DAEMON_CDI_SPEC_DIR` | CDI spec directory | `/var/run/cdi` |
+| `RBLN_CTK_DAEMON_CONFIG_PATH` | Runtime config path override (final path — see below) | _(runtime default)_ |
 | `RBLN_CTK_DAEMON_CONTAINER_LIBRARY_PATH` | Container library path for isolation | _(empty)_ |
 | `RBLN_CTK_DAEMON_SOCKET` | Runtime socket path | _(auto-detect)_ |
 | `RBLN_CTK_DAEMON_HEALTH_PORT` | Health check port | `8080` |
@@ -229,6 +230,35 @@ kubectl apply -f deployments/kubernetes/daemonset.yaml
 | `RBLN_CTK_DAEMON_NO_CLEANUP_ON_EXIT` | Skip cleanup on exit | `false` |
 | `RBLN_CTK_DAEMON_DEBUG` | Enable debug logging | `false` |
 | `RBLN_CTK_DAEMON_FORCE` | Terminate existing instance before starting | `false` |
+
+#### `RBLN_CTK_DAEMON_CONFIG_PATH` semantics
+
+> In this section `CONFIG_PATH` refers to `RBLN_CTK_DAEMON_CONFIG_PATH`
+> (CLI flag: `--config-path`), and `HOST_ROOT` refers to
+> `RBLN_CTK_DAEMON_HOST_ROOT`.
+
+When `CONFIG_PATH` is set, the daemon uses it **as the final path**
+inside its own filesystem namespace and does **not** prefix `HOST_ROOT`
+to it. The caller is responsible for making the file reachable and
+writable at that exact path. The override must be an **absolute path**;
+a relative value is rejected at startup.
+
+When `CONFIG_PATH` is unset, the daemon falls back to the runtime
+default (e.g. `/etc/containerd/config.toml`) and prefixes `HOST_ROOT`
+so the host's config can be reached through the host-root bind mount.
+
+| Scenario | `HOST_ROOT` | `CONFIG_PATH` | Path the daemon writes to |
+|----------|-------------|---------------|---------------------------|
+| Default on host | _(unset)_ | _(unset)_ | `/etc/containerd/config.toml` |
+| DaemonSet, default config | `/host` | _(unset)_ | `/host/etc/containerd/config.toml` |
+| rke2 / k3s on host-root mount | `/host` | `/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml` | same as `CONFIG_PATH` |
+| Operator-managed RW mount | `/host` | `/runtime/config-dir/config.toml` | same as `CONFIG_PATH` |
+
+> ⚠️ **Breaking change (v0.2.0):** Prior versions auto-prefixed
+> `RBLN_CTK_DAEMON_HOST_ROOT` to `RBLN_CTK_DAEMON_CONFIG_PATH`. If you
+> were passing a host-relative path (rke2/k3s), prepend the
+> `RBLN_CTK_DAEMON_HOST_ROOT` value manually, e.g.
+> `/var/lib/rancher/rke2/...` → `/host/var/lib/rancher/rke2/...`.
 
 #### CoreOS / OpenShift
 

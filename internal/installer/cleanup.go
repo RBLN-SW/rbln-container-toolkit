@@ -59,6 +59,10 @@ func Cleanup(opts CleanupOptions) error {
 		return fmt.Errorf("signal restart mode is not supported for CRI-O, use systemd or none")
 	}
 
+	if err := validateConfigPathOverride(opts.ConfigPath); err != nil {
+		return err
+	}
+
 	// Adjust paths for host root mount
 	configPath := getConfigPath(opts.Runtime, opts.HostRootMount, opts.ConfigPath)
 	socketPath := opts.Socket

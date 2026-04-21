@@ -1,5 +1,28 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.0 (unreleased)
+
+### Breaking Changes
+
+- **`RBLN_CTK_DAEMON_CONFIG_PATH` is now treated as the final path** inside
+  the daemon's filesystem — `HOST_ROOT` is no longer auto-prefixed when
+  `CONFIG_PATH` is set. Callers that previously relied on the automatic
+  prefix (e.g. rke2/k3s deployments passing a host-relative path) must
+  prepend the `HOST_ROOT` value themselves.
+
+  ```diff
+  - RBLN_CTK_DAEMON_HOST_ROOT=/host
+  - RBLN_CTK_DAEMON_CONFIG_PATH=/var/lib/rancher/rke2/agent/etc/containerd/config.toml
+  + RBLN_CTK_DAEMON_HOST_ROOT=/host
+  + RBLN_CTK_DAEMON_CONFIG_PATH=/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml
+  ```
+
+  The previous behavior made it impossible to point `CONFIG_PATH` at an
+  operator-managed RW volume mount that lives outside `HOST_ROOT`
+  (the npu-operator layout), because the daemon always tried to write
+  through the read-only `HOST_ROOT` mount. This change matches
+  nvidia-container-toolkit's `nvidia-ctk-installer --config` semantics.
+
 ## v0.1.1
 
 - Add device node discovery and CDI spec generation for RBLN NPU devices

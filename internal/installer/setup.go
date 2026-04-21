@@ -73,6 +73,10 @@ func Setup(opts SetupOptions) error {
 		return fmt.Errorf("signal restart mode is not supported for CRI-O, use systemd or none")
 	}
 
+	if err := validateConfigPathOverride(opts.ConfigPath); err != nil {
+		return err
+	}
+
 	// Adjust paths for host root mount
 	configPath := getConfigPath(opts.Runtime, opts.HostRootMount, opts.ConfigPath)
 	socketPath := opts.Socket
@@ -168,21 +172,47 @@ func dryRunSetup(opts SetupOptions, configPath, socketPath, cdiSpecDir string, l
 	return nil
 }
 
+// validateConfigPathOverride ensures an explicit config path override is
+// absolute. With the new semantics (override is the final path, not
+// host-relative), a relative override would write to the daemon's
+// current working directory instead of the intended location — fail
+// fast with a clear error rather than letting that happen silently.
+func validateConfigPathOverride(configPath string) error {
+	if configPath == "" {
+		return nil
+	}
+	if !filepath.IsAbs(configPath) {
+		return fmt.Errorf("config path override must be absolute: %q", configPath)
+	}
+	return nil
+}
+
+// getConfigPath resolves the runtime config path that the daemon should
+// read/write.
+//
+// When configPathOverride is set, it is treated as the final path — the
+// caller is responsible for mounting the underlying file/directory at
+// that location inside the container. hostRootMount is NOT prefixed to
+// an override.
+//
+// When no override is given, the runtime-default host path is used and
+// hostRootMount is prefixed so the daemon can reach the host's config
+// through its host-root bind mount.
 func getConfigPath(runtimeName, hostRootMount, configPathOverride string) string {
-	var configPath string
 	if configPathOverride != "" {
-		configPath = configPathOverride
-	} else {
-		switch runtimeName {
-		case "docker":
-			configPath = "/etc/docker/daemon.json"
-		case "containerd":
-			configPath = "/etc/containerd/config.toml"
-		case "crio":
-			configPath = "/etc/crio/crio.conf.d/99-rbln.conf"
-		default:
-			configPath = fmt.Sprintf("/etc/%s/config", runtimeName)
-		}
+		return configPathOverride
+	}
+
+	var configPath string
+	switch runtimeName {
+	case "docker":
+		configPath = "/etc/docker/daemon.json"
+	case "containerd":
+		configPath = "/etc/containerd/config.toml"
+	case "crio":
+		configPath = "/etc/crio/crio.conf.d/99-rbln.conf"
+	default:
+		configPath = fmt.Sprintf("/etc/%s/config", runtimeName)
 	}
 
 	if hostRootMount != "" {
