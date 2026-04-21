@@ -481,10 +481,17 @@ func TestResolveConfigPath(t *testing.T) {
 			expected:   "/host/etc/containerd/config.toml",
 		},
 		{
-			name:       "hostRoot prefix applied to override path",
+			name:       "override is used as-is even with hostRoot set",
 			rt:         runtime.RuntimeContainerd,
 			hostRoot:   "/host",
-			configPath: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			configPath: "/runtime/config-dir/config.toml",
+			expected:   "/runtime/config-dir/config.toml",
+		},
+		{
+			name:       "override with explicit host-prefixed path is kept as-is",
+			rt:         runtime.RuntimeContainerd,
+			hostRoot:   "/host",
+			configPath: "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
 			expected:   "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
 		},
 		{
@@ -538,32 +545,35 @@ func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
 		assert.True(t, os.IsNotExist(err))
 	})
 
-	t.Run("applies hostRoot prefix to override config path", func(t *testing.T) {
-		// Given: simulate /host mount with custom containerd config path
+	t.Run("uses override config path as-is even with hostRoot set", func(t *testing.T) {
+		// Given: simulate /host mount alongside an independently-mounted
+		// RW config path (the operator-managed layout).
+		// The override is the final path inside the daemon filesystem —
+		// hostRoot MUST NOT be prefixed to it.
 		tmpDir := t.TempDir()
-		hostRoot := tmpDir // tmpDir acts as /host
+		hostRoot := filepath.Join(tmpDir, "host")
+		require.NoError(t, os.MkdirAll(hostRoot, 0o755))
 
-		customConfigPath := "/var/lib/rancher/rke2/agent/etc/containerd/config.toml"
-		fullConfigPath := filepath.Join(hostRoot, customConfigPath)
-		require.NoError(t, os.MkdirAll(filepath.Dir(fullConfigPath), 0o755))
-
-		require.NoError(t, os.WriteFile(fullConfigPath, []byte("modified"), 0o644))
-		require.NoError(t, os.WriteFile(fullConfigPath+".backup", []byte("original"), 0o644))
+		overrideDir := filepath.Join(tmpDir, "runtime", "config-dir")
+		require.NoError(t, os.MkdirAll(overrideDir, 0o755))
+		overridePath := filepath.Join(overrideDir, "config.toml")
+		require.NoError(t, os.WriteFile(overridePath, []byte("modified"), 0o644))
+		require.NoError(t, os.WriteFile(overridePath+".backup", []byte("original"), 0o644))
 
 		cdiDir := filepath.Join(tmpDir, "cdi")
 		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
 
-		// When: cleanup with hostRoot and override config path
+		// When: cleanup with both hostRoot and an absolute override path
 		err := doCleanup(
 			runtime.RuntimeContainerd,
 			cdiDir,
 			hostRoot,
-			customConfigPath,
+			overridePath,
 		)
 
-		// Then: backup at hostRoot-prefixed path should be restored
+		// Then: backup at the override path (no hostRoot prefix) is restored
 		assert.NoError(t, err)
-		content, err := os.ReadFile(fullConfigPath)
+		content, err := os.ReadFile(overridePath)
 		require.NoError(t, err)
 		assert.Equal(t, "original", string(content))
 	})

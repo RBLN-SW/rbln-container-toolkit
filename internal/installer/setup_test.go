@@ -101,17 +101,24 @@ func TestGetConfigPath(t *testing.T) {
 			expected:           "/custom/docker/daemon.json",
 		},
 		{
-			name:               "override with host mount applies prefix",
+			name:               "override is treated as final path even with host mount",
 			runtime:            "containerd",
 			hostRootMount:      "/host",
-			configPathOverride: "/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
+			configPathOverride: "/runtime/config-dir/config.toml",
+			expected:           "/runtime/config-dir/config.toml",
+		},
+		{
+			name:               "override with explicit host-prefixed path keeps the path as-is",
+			runtime:            "containerd",
+			hostRootMount:      "/host",
+			configPathOverride: "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
 			expected:           "/host/var/lib/rancher/rke2/agent/etc/containerd/config.toml",
 		},
 		{
-			name:               "override with custom host mount applies prefix",
+			name:               "override with custom host mount is still treated as final path",
 			runtime:            "containerd",
 			hostRootMount:      "/custom/host",
-			configPathOverride: "/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
+			configPathOverride: "/custom/host/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
 			expected:           "/custom/host/var/lib/rancher/k3s/agent/etc/containerd/config.toml",
 		},
 		{
@@ -131,6 +138,53 @@ func TestGetConfigPath(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestValidateConfigPathOverride(t *testing.T) {
+	tests := []struct {
+		name       string
+		configPath string
+		wantErr    bool
+	}{
+		{name: "empty override is allowed (uses runtime default)", configPath: "", wantErr: false},
+		{name: "absolute path is accepted", configPath: "/etc/containerd/config.toml", wantErr: false},
+		{name: "absolute path under operator mount", configPath: "/runtime/config-dir/config.toml", wantErr: false},
+		{name: "relative path is rejected", configPath: "etc/containerd/config.toml", wantErr: true},
+		{name: "dot-slash relative path is rejected", configPath: "./config.toml", wantErr: true},
+		{name: "parent relative path is rejected", configPath: "../config.toml", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfigPathOverride(tt.configPath)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "must be absolute")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestSetup_RejectsRelativeConfigPathOverride(t *testing.T) {
+	// Given
+	tmpDir := t.TempDir()
+	opts := SetupOptions{
+		Runtime:     "containerd",
+		RestartMode: restart.RestartModeNone,
+		PidFile:     filepath.Join(tmpDir, "test.pid"),
+		CDISpecDir:  filepath.Join(tmpDir, "cdi"),
+		ConfigPath:  "etc/containerd/config.toml",
+		DryRun:      true,
+	}
+
+	// When
+	err := Setup(opts)
+
+	// Then
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must be absolute")
 }
 
 func TestSetup_CrioSignalModeError(t *testing.T) {
