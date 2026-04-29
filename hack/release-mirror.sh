@@ -40,7 +40,11 @@ REMOTE_URL="git@github.com:${PUBLIC_REPO}.git"
 git remote add public "${REMOTE_URL}" 2>/dev/null || git remote set-url public "${REMOTE_URL}"
 
 echo "  Pushing main branch..."
-git push public HEAD:main --force-with-lease
+# One-way mirror: public main is overwritten unconditionally. --force-with-lease
+# would reject the first-ever push (no remote-tracking ref + unrelated history
+# on the seeded public repo) without providing real safety here, since this
+# script is the sole writer to the public main.
+git push public HEAD:main --force
 
 echo "  Pushing tag ${TAG}..."
 git push public "${TAG}"
