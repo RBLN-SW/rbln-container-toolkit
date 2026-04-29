@@ -25,3 +25,22 @@ jobs:
           fetch-depth: 0
       - name: Mirror push
         run: ./hack/release-mirror.sh "${{ inputs.tag }}"
+
+  dockerhub:
+    name: Push to Docker Hub
+    needs: mirror
+    if: ${{ !contains(inputs.tag, '-rc') }}
+    runs-on: ssw-ubuntu-22.04-large
+    timeout-minutes: 15
+    env:
+      SSW_HARBOR_URL: ${{ secrets.SSW_HARBOR_URL }}
+      SSW_HARBOR_USERNAME: ${{ secrets.SSW_HARBOR_USERNAME }}
+      SSW_HARBOR_PASSWORD: ${{ secrets.SSW_HARBOR_PASSWORD }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Push to Docker Hub
+        run: ./hack/release-dockerhub.sh "${{ inputs.tag }}"

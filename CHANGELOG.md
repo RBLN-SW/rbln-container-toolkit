@@ -5,6 +5,7 @@
 - Add device node discovery and CDI spec generation for RBLN NPU devices
 - Add `RBLN_CTK_DAEMON_CONFIG_PATH` environment variable for runtime config override
 - Add release workflow with script delegation pattern (tag-triggered CI/CD pipeline)
+- Mirror release image to Docker Hub (`rebellions/rbln-container-toolkit`) on stable tag publish
 - `RBLN_CTK_DAEMON_CONFIG_PATH` is treated as the final path inside the
   daemon filesystem and is not auto-prefixed with `RBLN_CTK_DAEMON_HOST_ROOT`.
   Callers passing host-relative paths (rke2/k3s) must include the host-root
