@@ -19,9 +19,13 @@ jobs:
     env:
       PUBLIC_REPO_DEPLOY_KEY: ${{ secrets.PUBLIC_REPO_DEPLOY_KEY }}
     steps:
+      # Check out main (not the release tag) so the latest hack/ scripts run
+      # regardless of which tag is being published. Past tags may ship with
+      # older or missing release scripts. The script still pushes the requested
+      # tag explicitly via `git push public "${TAG}"`.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: main
           fetch-depth: 0
       - name: Mirror push
         run: ./hack/release-mirror.sh "${{ inputs.tag }}"
@@ -39,8 +43,9 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
     steps:
+      # See mirror job for rationale on `ref: main`.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: main
       - name: Push to Docker Hub
         run: ./hack/release-dockerhub.sh "${{ inputs.tag }}"
