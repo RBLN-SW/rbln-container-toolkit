@@ -40,8 +40,8 @@ jobs:
       SSW_HARBOR_URL: ${{ secrets.SSW_HARBOR_URL }}
       SSW_HARBOR_USERNAME: ${{ secrets.SSW_HARBOR_USERNAME }}
       SSW_HARBOR_PASSWORD: ${{ secrets.SSW_HARBOR_PASSWORD }}
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_CTK_USER }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_CTK_PW }}
     steps:
       # See mirror job for rationale on `ref: main`.
       - uses: actions/checkout@v4
