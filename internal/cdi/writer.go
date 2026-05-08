@@ -19,9 +19,11 @@ package cdi
 //go:generate moq -rm -fmt=goimports -stub -out writer_mock.go . Writer
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -143,31 +145,104 @@ func NewWriter() Writer {
 	return &writer{}
 }
 
-// Write writes the spec to a file.
+// Write writes the spec to a file atomically, with a best-effort flush
+// for crash durability.
+//
+// The flow is: marshal → temp file in same dir → chmod → fsync → close →
+// rename → fsync(parent dir). Concurrent readers (container runtimes
+// loading the spec) always observe either the previous full content or
+// the new full content, never a partial write. chmod runs before the
+// file's fsync so permission metadata is part of the same flush as the
+// contents — otherwise a crash between fsync and rename could land a
+// 0o600 spec from os.CreateTemp on disk.
+//
+// The trailing parent-directory fsync increases the chance that the
+// rename survives a power loss on filesystems like ext4 without
+// data=journal, but it is best-effort: a failure here is logged and
+// swallowed because the rename has already published the new spec to
+// readers and unwinding would only obscure a correct on-disk state.
 func (w *writer) Write(spec *specs.Spec, path, format string) error {
 	if spec == nil {
 		return fmt.Errorf("spec is nil: %w", rbln_errors.ErrInvalidCDISpec)
 	}
 
-	// Validate format
 	if format != "yaml" && format != "json" {
 		return fmt.Errorf("unsupported format: %s (expected yaml or json): %w", format, rbln_errors.ErrWriteFailed)
 	}
 
-	// Create directory if needed
+	var buf bytes.Buffer
+	if err := w.WriteToWriter(spec, &buf, format); err != nil {
+		return err
+	}
+
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory %s: %v", dir, err)
 	}
 
-	// Create file
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create file %s: %v", path, err)
+		return fmt.Errorf("create temp file in %s: %v", dir, err)
 	}
-	defer f.Close()
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close() // idempotent close after explicit close in happy path
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-	return w.WriteToWriter(spec, f, format)
+	// buf.WriteTo loops internally until the full buffer is written, so a
+	// short write from the underlying io.Writer cannot leave a truncated
+	// file behind — important for crash safety and to satisfy reviewers
+	// who have been bitten by short writes on non-os.File destinations.
+	if _, err := buf.WriteTo(tmp); err != nil {
+		return fmt.Errorf("write temp file %s: %v", tmpPath, err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return fmt.Errorf("chmod temp file %s: %v", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temp file %s: %v", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file %s: %v", tmpPath, err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename %s to %s: %v", tmpPath, path, err)
+	}
+	// Once the rename returns, the new spec is the live one for any reader
+	// opening the file from now on. Marking committed here keeps the
+	// deferred cleanup out of an already-published file, and ensures a
+	// failure of the trailing directory fsync — which only affects crash
+	// durability, not correctness for live readers — does not unwind the
+	// successful rename.
+	committed = true
+
+	// Best-effort durability flush of the directory entry. Filesystems
+	// where directory fsync isn't supported (some FUSE backends) would
+	// otherwise turn a perfectly correct on-disk spec into a Write error.
+	// We log and move on; the next regeneration (or a daemon restart that
+	// re-runs this path) gets another chance to persist the dentry.
+	if err := syncDir(dir); err != nil {
+		log.Printf("WARNING: cdi-writer: fsync directory %s: %v (rename succeeded; spec is correct, durability across power loss may be reduced)", dir, err)
+	}
+	return nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	syncErr := d.Sync()
+	closeErr := d.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }
 
 // WriteToWriter writes the spec to an io.Writer.

@@ -29,6 +29,7 @@ var (
 	ErrNoToolsFound       = errors.New("no tools found")
 	ErrLdcacheParseFailed = errors.New("failed to parse ldcache")
 	ErrLddFailed          = errors.New("ldd execution failed")
+	ErrVersionNotFound    = errors.New("rbln version marker not found in library")
 
 	// CDI errors
 	ErrInvalidCDISpec = errors.New("invalid CDI specification")

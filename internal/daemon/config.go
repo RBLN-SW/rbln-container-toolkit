@@ -98,6 +98,13 @@ type Config struct {
 
 	// Force terminates existing daemon instance before starting.
 	Force bool
+
+	// RefreshInterval is the polling interval for the UMD version watcher.
+	// Zero disables the watcher entirely; negative values are rejected by
+	// Validate. The watcher discovers librbln-*.so files in the standard
+	// library directories and detects driver upgrades by re-reading the
+	// embedded `rbln version:` string in each one.
+	RefreshInterval time.Duration
 }
 
 // NewDaemonConfig creates a new DaemonConfig with default values.
@@ -114,6 +121,7 @@ func NewDaemonConfig() *Config {
 		ContainerLibraryPath: "",
 		Socket:               "",
 		Debug:                false,
+		RefreshInterval:      60 * time.Second,
 	}
 }
 
@@ -137,6 +145,10 @@ func (c *Config) Validate() error {
 
 	if c.PidFile == "" {
 		return fmt.Errorf("pid file path is required")
+	}
+
+	if c.RefreshInterval < 0 {
+		return fmt.Errorf("refresh interval must be >= 0 (0 disables the watcher)")
 	}
 
 	return nil
