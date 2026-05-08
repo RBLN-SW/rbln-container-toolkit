@@ -1,5 +1,19 @@
 # RBLN Container Toolkit Changelog
 
+## v0.1.2
+
+- Stop pinning host device nodes (`/dev/rbln*`, `/dev/rsd*`) into the runtime
+  CDI device on Kubernetes runtimes. The daemon now sets
+  `cfg.Devices.Disabled = true` whenever it targets containerd or CRI-O so that
+  device-plugin / DRA owns per-Pod device injection. Without this fix
+  `/dev/rsd0` was statically mounted into every Pod via
+  `rebellions.ai/npu=runtime`, masking the RSD group device that
+  device-plugin allocated for the workload.
+- Add `devices.disabled` field to the toolkit config (default `false`,
+  preserves Docker behavior of CTK injecting device nodes via the runtime CDI
+  device). Setting it to `true` skips both device discovery and device-node
+  emission in the generated spec.
+
 ## v0.1.1
 
 - Add device node discovery and CDI spec generation for RBLN NPU devices

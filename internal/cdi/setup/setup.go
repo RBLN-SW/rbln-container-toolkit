@@ -43,7 +43,7 @@ func GenerateCDISpec(opts *Options) error {
 		toolDiscoverer = discover.NewToolDiscoverer(opts.Config)
 	}
 	deviceDiscoverer := opts.DeviceDiscoverer
-	if deviceDiscoverer == nil {
+	if deviceDiscoverer == nil && !opts.Config.Devices.Disabled {
 		deviceDiscoverer = discover.NewDeviceDiscoverer(opts.Config)
 	}
 
@@ -100,7 +100,7 @@ func GenerateCDISpecToWriter(w io.Writer, opts *Options) error {
 		toolDiscoverer = discover.NewToolDiscoverer(opts.Config)
 	}
 	deviceDiscoverer := opts.DeviceDiscoverer
-	if deviceDiscoverer == nil {
+	if deviceDiscoverer == nil && !opts.Config.Devices.Disabled {
 		deviceDiscoverer = discover.NewDeviceDiscoverer(opts.Config)
 	}
 

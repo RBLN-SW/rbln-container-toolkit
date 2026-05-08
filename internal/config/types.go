@@ -76,6 +76,13 @@ type SELinuxConfig struct {
 type DeviceConfig struct {
 	// Patterns are glob patterns to discover device nodes (e.g., "/dev/rbln*").
 	Patterns []string `yaml:"patterns"`
+
+	// Disabled turns off device-node discovery and emission into the CDI spec.
+	// Default false matches Docker-style usage where the CDI runtime device
+	// must inject /dev/rbln* itself. Kubernetes deployments set this to true
+	// so that device-plugin/DRA owns per-allocation device injection without
+	// CTK statically pinning device nodes (notably /dev/rsd0) into every Pod.
+	Disabled bool `yaml:"disabled"`
 }
 
 // HookConfig represents CDI hook settings.

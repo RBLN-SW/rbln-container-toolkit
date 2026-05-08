@@ -204,6 +204,17 @@ func (m *mockToolDiscoverer) Discover() ([]discover.Tool, error) {
 	return m.tools, m.err
 }
 
+type mockDeviceDiscoverer struct {
+	devices []discover.Device
+	err     error
+	calls   int
+}
+
+func (m *mockDeviceDiscoverer) Discover() ([]discover.Device, error) {
+	m.calls++
+	return m.devices, m.err
+}
+
 func TestGenerateCDISpecToWriter_Success(t *testing.T) {
 	// Given a valid configuration and a buffer to write to
 	var buf bytes.Buffer
@@ -429,6 +440,115 @@ func TestGenerateCDISpec_DefaultFormat(t *testing.T) {
 	require.NoError(t, err)
 	_, statErr := os.Stat(outputPath)
 	assert.NoError(t, statErr)
+}
+
+func TestGenerateCDISpec_DevicesDisabled_SkipsDeviceDiscovery(t *testing.T) {
+	// Given: Devices.Disabled=true (Kubernetes path) and no explicit DeviceDiscoverer.
+	// The setup must NOT auto-construct a DeviceDiscoverer that would scan the
+	// host's /dev/* and pin nodes (notably /dev/rsd0) onto the runtime device.
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		CDI: config.CDIConfig{
+			Vendor: "rebellions.ai",
+			Class:  "npu",
+		},
+		Devices: config.DeviceConfig{
+			Disabled: true,
+		},
+	}
+	opts := &Options{
+		Config:            cfg,
+		Format:            "yaml",
+		ErrorMode:         ErrorModeLenient,
+		Logger:            &mockLogger{},
+		LibraryDiscoverer: &mockLibraryDiscoverer{},
+		ToolDiscoverer:    &mockToolDiscoverer{},
+		// DeviceDiscoverer intentionally nil
+	}
+
+	// When
+	err := GenerateCDISpecToWriter(&buf, opts)
+
+	// Then: spec is written and contains no deviceNodes block.
+	require.NoError(t, err)
+	output := buf.String()
+	assert.NotContains(t, output, "deviceNodes:",
+		"Devices.Disabled=true must suppress all deviceNodes emission")
+}
+
+func TestGenerateCDISpec_DevicesDisabled_RespectsCallerSuppliedDiscoverer(t *testing.T) {
+	// Given: caller supplies a DeviceDiscoverer AND sets Devices.Disabled=true.
+	// The discoverer is allowed to run (caller owns lifecycle), but the
+	// generator must still drop the devices so K8s deployments are protected
+	// even if a future refactor wires a discoverer in by accident.
+	var buf bytes.Buffer
+	mockDevDisc := &mockDeviceDiscoverer{
+		devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := &config.Config{
+		CDI: config.CDIConfig{
+			Vendor: "rebellions.ai",
+			Class:  "npu",
+		},
+		Devices: config.DeviceConfig{
+			Disabled: true,
+		},
+	}
+	opts := &Options{
+		Config:            cfg,
+		Format:            "yaml",
+		ErrorMode:         ErrorModeLenient,
+		Logger:            &mockLogger{},
+		LibraryDiscoverer: &mockLibraryDiscoverer{},
+		ToolDiscoverer:    &mockToolDiscoverer{},
+		DeviceDiscoverer:  mockDevDisc,
+	}
+
+	// When
+	err := GenerateCDISpecToWriter(&buf, opts)
+
+	// Then: even though the discoverer was called, no deviceNodes are emitted.
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "deviceNodes:",
+		"generator-level defense must suppress device-node emission when Devices.Disabled=true")
+}
+
+func TestGenerateCDISpec_DevicesEnabled_EmitsDeviceNodes(t *testing.T) {
+	// Given: default Devices.Disabled=false (Docker path) with a mock that returns devices.
+	var buf bytes.Buffer
+	mockDevDisc := &mockDeviceDiscoverer{
+		devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+		},
+	}
+	cfg := &config.Config{
+		CDI: config.CDIConfig{
+			Vendor: "rebellions.ai",
+			Class:  "npu",
+		},
+		// Devices.Disabled left as zero value (false)
+	}
+	opts := &Options{
+		Config:            cfg,
+		Format:            "yaml",
+		ErrorMode:         ErrorModeLenient,
+		Logger:            &mockLogger{},
+		LibraryDiscoverer: &mockLibraryDiscoverer{},
+		ToolDiscoverer:    &mockToolDiscoverer{},
+		DeviceDiscoverer:  mockDevDisc,
+	}
+
+	// When
+	err := GenerateCDISpecToWriter(&buf, opts)
+
+	// Then: device nodes are emitted (Docker-compatible v0.1.1 behavior preserved).
+	require.NoError(t, err)
+	output := buf.String()
+	assert.Contains(t, output, "deviceNodes:")
+	assert.Contains(t, output, "/dev/rbln0")
 }
 
 func TestGenerateCDISpecToWriter_DefaultFormat(t *testing.T) {
