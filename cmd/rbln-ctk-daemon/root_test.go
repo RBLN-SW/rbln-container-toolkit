@@ -1132,3 +1132,25 @@ func TestRerootUnder(t *testing.T) {
 		})
 	}
 }
+
+func TestIsKubernetesRuntime(t *testing.T) {
+	tests := []struct {
+		rt   runtime.RuntimeType
+		want bool
+	}{
+		// K8s runtimes: device-plugin owns per-Pod injection, suppress CTK's
+		// device-node emission to avoid pinning /dev/rsd0 onto every Pod.
+		{runtime.RuntimeContainerd, true},
+		{runtime.RuntimeCRIO, true},
+		// Docker has no allocator; keep v0.1.1 behavior of injecting devices.
+		{runtime.RuntimeDocker, false},
+		// Unknown / empty runtimes default to "not K8s" so we don't accidentally
+		// suppress device emission on environments we haven't classified.
+		{runtime.RuntimeType(""), false},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.rt), func(t *testing.T) {
+			assert.Equal(t, tc.want, isKubernetesRuntime(tc.rt))
+		})
+	}
+}

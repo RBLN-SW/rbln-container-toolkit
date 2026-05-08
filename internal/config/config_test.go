@@ -40,6 +40,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Contains(t, cfg.Tools, "rbln-smi")
 	assert.Equal(t, "/", cfg.DriverRoot)
 	assert.False(t, cfg.Debug)
+	assert.False(t, cfg.Devices.Disabled,
+		"Devices.Disabled must default to false so Docker users keep receiving device nodes; the daemon flips it to true for K8s runtimes")
 }
 
 func TestLoader_LoadWithDefaults(t *testing.T) {
