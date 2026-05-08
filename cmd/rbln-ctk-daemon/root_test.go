@@ -1061,3 +1061,74 @@ func TestEnvVarBinding(t *testing.T) {
 		assert.Equal(t, 9999, viper.GetInt("health_port"))
 	})
 }
+
+func TestRefreshLibDirs(t *testing.T) {
+	t.Run("host scope returns canonical search paths untouched", func(t *testing.T) {
+		got := refreshLibDirs("/", "/")
+		assert.Contains(t, got, "/usr/lib64")
+		assert.Contains(t, got, "/usr/lib/x86_64-linux-gnu")
+		assert.Equal(t, "/usr/lib64", got[0])
+	})
+
+	t.Run("containerized daemon reroots under hostRoot", func(t *testing.T) {
+		got := refreshLibDirs("/host", "/")
+		assert.Equal(t, "/host/usr/lib64", got[0])
+		assert.Contains(t, got, "/host/usr/lib/x86_64-linux-gnu")
+	})
+
+	t.Run("CoreOS driver container nests under hostRoot+driverRoot", func(t *testing.T) {
+		got := refreshLibDirs("/host", "/run/rbln/driver")
+		assert.Equal(t, "/host/run/rbln/driver/usr/lib64", got[0])
+		assert.Contains(t, got, "/host/run/rbln/driver/usr/lib/x86_64-linux-gnu")
+	})
+
+	t.Run("driverRoot only (bare host with driver under custom path)", func(t *testing.T) {
+		got := refreshLibDirs("/", "/run/rbln/driver")
+		assert.Equal(t, "/run/rbln/driver/usr/lib64", got[0])
+	})
+}
+
+func TestJoinSearchPrefix(t *testing.T) {
+	tests := []struct {
+		name       string
+		hostRoot   string
+		driverRoot string
+		want       string
+	}{
+		{"both empty", "", "", ""},
+		{"both root", "/", "/", "/"},
+		{"hostRoot only", "/host", "/", "/host"},
+		{"hostRoot only - empty driverRoot", "/host", "", "/host"},
+		{"driverRoot only - bare host", "/", "/run/rbln/driver", "/run/rbln/driver"},
+		{"driverRoot only - empty host", "", "/run/rbln/driver", "/run/rbln/driver"},
+		{"both set", "/host", "/run/rbln/driver", "/host/run/rbln/driver"},
+		{"relative driverRoot", "/host", "run/rbln/driver", "/host/run/rbln/driver"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, joinSearchPrefix(tc.hostRoot, tc.driverRoot))
+		})
+	}
+}
+
+func TestRerootUnder(t *testing.T) {
+	// Documents the explicit re-rooting contract — that an absolute `abs`
+	// (the common case for SearchPaths.Libraries entries) ends up nested
+	// inside `prefix` regardless of whether filepath.Join would have done
+	// the same thing implicitly.
+	tests := []struct {
+		prefix string
+		abs    string
+		want   string
+	}{
+		{"/host", "/usr/lib64", "/host/usr/lib64"},
+		{"/host", "/usr/lib/x86_64-linux-gnu", "/host/usr/lib/x86_64-linux-gnu"},
+		{"/host/run/rbln/driver", "/usr/lib64", "/host/run/rbln/driver/usr/lib64"},
+		{"/host", "usr/lib64", "/host/usr/lib64"}, // relative abs still works
+	}
+	for _, tc := range tests {
+		t.Run(tc.prefix+"+"+tc.abs, func(t *testing.T) {
+			assert.Equal(t, tc.want, rerootUnder(tc.prefix, tc.abs))
+		})
+	}
+}

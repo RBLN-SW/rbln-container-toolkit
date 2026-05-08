@@ -19,6 +19,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -45,6 +46,8 @@ type Daemon struct {
 
 	healthServer *HealthServer
 
+	watcher *Watcher
+
 	// Channels for signal coordination
 	waitingForSignal chan struct{}
 	signalReceived   chan struct{}
@@ -60,6 +63,54 @@ func NewDaemon(config *Config, cleanup CleanupFunc) *Daemon {
 		waitingForSignal: make(chan struct{}, 1),
 		signalReceived:   make(chan struct{}, 1),
 	}
+}
+
+// SetWatcher attaches a CDI version watcher that runs alongside the daemon.
+// Pass nil to disable. Must be called before Run; calling after Run has no
+// effect because the watcher is launched only during the StateRunning
+// transition.
+func (d *Daemon) SetWatcher(w *Watcher) {
+	d.watcher = w
+}
+
+// PublishWatcherStatus mirrors a watcher status snapshot into the health
+// server's `cdi-refresh` check. Callers wire this as the watcher's
+// StatusHook so /ready can report when the daemon last observed the host's
+// UMD libraries and whether the most recent regeneration succeeded.
+func (d *Daemon) PublishWatcherStatus(s WatcherStatus) {
+	if d.healthServer == nil {
+		return
+	}
+	d.healthServer.AddCheck("cdi-refresh", watcherCheck(s))
+}
+
+// watcherCheck collapses a WatcherStatus into the {Status, Message} shape
+// the health server already exposes. Status is "ok" by default and "error"
+// only when the most recent refresh callback returned an error; the message
+// always includes last_run and library counts so operators can confirm the
+// watcher is alive even when nothing has changed.
+//
+// LastErr semantics: the watcher records the result of the most recent
+// regeneration *attempt*, not the freshness of the on-disk spec. On a
+// callback failure the watcher rolls its baseline back to the previous
+// snapshot, so the next tick re-detects the same version change and
+// re-runs the callback automatically — transient errors (disk full,
+// momentary EIO) self-heal without operator intervention. While retries
+// are in flight the previously-written CDI spec is still valid for new
+// container starts. A permanent failure keeps Status "error" sticky and
+// retries every refresh interval until resolved.
+func watcherCheck(s WatcherStatus) CheckResult {
+	lastRun := "never"
+	if !s.LastRun.IsZero() {
+		lastRun = s.LastRun.UTC().Format(time.RFC3339)
+	}
+	status := "ok"
+	msg := fmt.Sprintf("last_run=%s libraries=%d", lastRun, len(s.Versions))
+	if s.LastErr != nil {
+		status = "error"
+		msg = fmt.Sprintf("%s error=%v", msg, s.LastErr)
+	}
+	return CheckResult{Status: status, Message: msg}
 }
 
 // Run starts the daemon and blocks until shutdown.
@@ -131,6 +182,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.healthServer.AddCheck("daemon", CheckResult{Status: "ready", Message: "Daemon is running"})
 	log.Println("INFO: Setup complete. Waiting for signal...")
 
+	// Start CDI version watcher if configured. Tied to a derived context so
+	// shutdown propagates a cancel and we can wait for the goroutine to exit.
+	watcherCtx, watcherCancel := context.WithCancel(ctx)
+	defer watcherCancel()
+	watcherDone := make(chan struct{})
+	if d.watcher != nil {
+		go func() {
+			defer close(watcherDone)
+			err := d.watcher.Run(watcherCtx)
+			// Both ctx.Canceled (graceful shutdown) and DeadlineExceeded
+			// (parent context with a timeout) are normal exit paths and
+			// should not log a WARNING. Anything else is genuinely
+			// unexpected.
+			if err != nil &&
+				!errors.Is(err, context.Canceled) &&
+				!errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("WARNING: cdi-watcher exited unexpectedly: %v", err)
+			}
+		}()
+	} else {
+		close(watcherDone)
+	}
+
 	// Wait for signal or context cancellation
 	close(d.waitingForSignal) // Signal that we're ready
 	select {
@@ -143,6 +217,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Perform graceful shutdown
 	d.healthServer.SetReady(false)
 	d.setState(StateShuttingDown)
+
+	// Stop watcher and wait for its goroutine to return so cleanup runs
+	// without a concurrent CDI regeneration in flight. We bound the wait
+	// by ShutdownTimeout: the VersionProber API has no context, so a
+	// probe stuck in a slow filesystem call (e.g. unresponsive NFS) would
+	// otherwise hold the daemon open past its configured timeout. After
+	// the timeout we proceed with cleanup and let the goroutine leak —
+	// the process is about to exit anyway.
+	watcherCancel()
+	select {
+	case <-watcherDone:
+	case <-time.After(d.config.ShutdownTimeout):
+		log.Printf("WARNING: cdi-watcher did not stop within %s; proceeding with cleanup (probe may be blocked on slow I/O)", d.config.ShutdownTimeout)
+	}
 
 	// Stop health server
 	healthCancel()

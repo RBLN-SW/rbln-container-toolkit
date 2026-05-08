@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -491,4 +492,110 @@ func TestDaemon_RealSignal(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("daemon did not exit in time")
 	}
+}
+
+// TestDaemon_BoundsWatcherShutdownByConfiguredTimeout verifies the daemon
+// does not hang on an unresponsive watcher. We attach a watcher whose
+// prober blocks until the test releases it; on shutdown the daemon must
+// stop waiting after ShutdownTimeout and proceed with cleanup, even
+// though Run() never returns from its in-flight baseline.
+func TestDaemon_BoundsWatcherShutdownByConfiguredTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := NewDaemonConfig()
+	cfg.PidFile = filepath.Join(tmpDir, "test.pid")
+	cfg.ShutdownTimeout = 200 * time.Millisecond
+
+	probeReleased := make(chan struct{})
+	var probeStarted atomic.Bool
+	prober := func() (map[string]string, map[string]error) {
+		probeStarted.Store(true)
+		<-probeReleased // simulate a hung probe
+		return nil, nil
+	}
+	w := NewWatcher(WatcherOptions{
+		Interval: 5 * time.Millisecond,
+		Probe:    prober,
+	})
+	require.NotNil(t, w)
+
+	d := NewDaemon(cfg, nil)
+	d.SetWatcher(w)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- d.Run(ctx) }()
+
+	// Wait for the baseline probe to actually enter the gate before
+	// signaling shutdown. A fixed sleep would be flaky on slow CI.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !probeStarted.Load() {
+		time.Sleep(2 * time.Millisecond)
+	}
+	require.True(t, probeStarted.Load(), "baseline probe should have started before shutdown")
+
+	// When shutdown is signaled, Run must return within ~ShutdownTimeout
+	// even though the probe is still blocked.
+	cancel()
+	start := time.Now()
+	select {
+	case err := <-errCh:
+		elapsed := time.Since(start)
+		assert.NoError(t, err)
+		assert.Less(t, elapsed, cfg.ShutdownTimeout+500*time.Millisecond,
+			"daemon must not wait for hung watcher beyond ShutdownTimeout")
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon hung past expected shutdown bound")
+	}
+
+	// Release the prober so its goroutine doesn't leak past the test.
+	close(probeReleased)
+}
+
+func TestDaemon_RunsAndStopsAttachedWatcher(t *testing.T) {
+	// Given a daemon with a watcher backed by a counting prober
+	tmpDir := t.TempDir()
+	cfg := NewDaemonConfig()
+	cfg.PidFile = filepath.Join(tmpDir, "test.pid")
+	cfg.ShutdownTimeout = 2 * time.Second
+
+	var probeCalls atomic.Int32
+	prober := func() (map[string]string, map[string]error) {
+		probeCalls.Add(1)
+		return map[string]string{"/lib/a.so": "1.0.0"}, nil
+	}
+	w := NewWatcher(WatcherOptions{
+		Interval: 5 * time.Millisecond,
+		Probe:    prober,
+	})
+	require.NotNil(t, w)
+
+	d := NewDaemon(cfg, nil)
+	d.SetWatcher(w)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- d.Run(ctx) }()
+
+	// Wait until the watcher has actually probed at least twice (baseline + 1 tick)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && probeCalls.Load() < 2 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	require.GreaterOrEqual(t, probeCalls.Load(), int32(2), "watcher should have probed during Run")
+
+	// When the daemon shuts down
+	cancel()
+
+	// Then Run returns and the watcher stops issuing probes
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not exit in time")
+	}
+	stoppedAt := probeCalls.Load()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, stoppedAt, probeCalls.Load(), "watcher must stop probing after shutdown")
 }

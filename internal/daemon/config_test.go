@@ -115,6 +115,27 @@ func TestDaemonConfig_Validate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "pid file path is required",
 		},
+		{
+			name: "negative refresh interval rejected",
+			config: &Config{
+				ShutdownTimeout: 30 * time.Second,
+				HealthPort:      8080,
+				PidFile:         "/run/rbln/toolkit.pid",
+				RefreshInterval: -1 * time.Second,
+			},
+			wantErr: true,
+			errMsg:  "refresh interval must be >= 0",
+		},
+		{
+			name: "zero refresh interval is allowed (watcher disabled)",
+			config: &Config{
+				ShutdownTimeout: 30 * time.Second,
+				HealthPort:      8080,
+				PidFile:         "/run/rbln/toolkit.pid",
+				RefreshInterval: 0,
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -150,6 +171,7 @@ func TestDaemonConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, "/var/run/cdi", cfg.CDISpecDir)
 	assert.False(t, cfg.NoCleanupOnExit)
 	assert.False(t, cfg.Debug)
+	assert.Equal(t, 60*time.Second, cfg.RefreshInterval)
 }
 
 func TestRuntimeType_IsValid(t *testing.T) {

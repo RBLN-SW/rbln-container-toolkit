@@ -32,6 +32,7 @@ import (
 	cdisetup "github.com/RBLN-SW/rbln-container-toolkit/internal/cdi/setup"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/config"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/daemon"
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/discover"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/restart"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/runtime"
 )
@@ -90,6 +91,7 @@ Flags:
 	cmd.Flags().String("config-path", "", "Runtime config path override (default: per-runtime) [$RBLN_CTK_DAEMON_CONFIG_PATH]")
 	cmd.Flags().BoolP("debug", "d", false, "Enable debug logging [$RBLN_CTK_DAEMON_DEBUG]")
 	cmd.Flags().BoolP("force", "f", false, "Terminate existing instance before starting [$RBLN_CTK_DAEMON_FORCE]")
+	cmd.Flags().Duration("refresh-interval", 60*time.Second, "Polling interval for UMD driver version changes; 0 disables auto-refresh [$RBLN_CTK_DAEMON_REFRESH_INTERVAL]")
 
 	// Bind to viper for env var support
 	viper.SetEnvPrefix("RBLN_CTK_DAEMON")
@@ -106,6 +108,7 @@ Flags:
 	_ = viper.BindPFlag("config_path", cmd.Flags().Lookup("config-path"))
 	_ = viper.BindPFlag("debug", cmd.Flags().Lookup("debug"))
 	_ = viper.BindPFlag("force", cmd.Flags().Lookup("force"))
+	_ = viper.BindPFlag("refresh_interval", cmd.Flags().Lookup("refresh-interval"))
 
 	cmd.SetHelpCommand(&cobra.Command{Hidden: true})
 	cmd.CompletionOptions.HiddenDefaultCmd = true
@@ -162,6 +165,8 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 		log.Printf("INFO: Detected runtime: %s", rt)
 	}
 
+	refreshInterval := viper.GetDuration("refresh_interval")
+
 	// Create daemon config
 	cfg := &daemon.Config{
 		Runtime:              daemon.RuntimeType(rt),
@@ -170,11 +175,13 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 		HealthPort:           healthPort,
 		NoCleanupOnExit:      noCleanup,
 		HostRootMount:        hostRoot,
+		DriverRoot:           driverRoot,
 		CDISpecDir:           cdiDir,
 		ContainerLibraryPath: containerLibraryPath,
 		Socket:               socketPath,
 		Debug:                debugFlag,
 		Force:                viper.GetBool("force"),
+		RefreshInterval:      refreshInterval,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -186,6 +193,10 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	}
 
 	d := daemon.NewDaemon(cfg, cleanup)
+
+	if w := buildRefreshWatcher(d, cfg); w != nil {
+		d.SetWatcher(w)
+	}
 
 	if err := d.AcquirePIDLock(); err != nil {
 		return fmt.Errorf("acquire PID lock: %w", err)
@@ -217,22 +228,105 @@ func (l *daemonLogger) Debug(msg string, args ...interface{}) {
 	}
 }
 
-func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath string) error {
-	if hostRoot != "/" && hostRoot != "" {
-		if err := installHookBinary(hostRoot); err != nil {
-			log.Printf("WARNING: Failed to install hook binary: %v", err)
-		}
+// buildRefreshWatcher constructs the UMD version watcher whose callback
+// regenerates the CDI spec when a driver upgrade changes the embedded
+// `rbln version:` string of any installed librbln-*.so. Returns nil if the
+// watcher is disabled (RefreshInterval <= 0). The watcher rediscovers
+// libraries on each tick by globbing the standard library directories, so
+// new .so files appearing after startup are picked up automatically.
+func buildRefreshWatcher(d *daemon.Daemon, cfg *daemon.Config) *daemon.Watcher {
+	if cfg.RefreshInterval <= 0 {
+		log.Println("INFO: CDI auto-refresh watcher disabled (refresh-interval=0)")
+		return nil
 	}
 
+	libDirs := refreshLibDirs(cfg.HostRootMount, cfg.DriverRoot)
+	log.Printf("INFO: CDI auto-refresh watcher: interval=%s, libDirs=%v", cfg.RefreshInterval, libDirs)
+
+	return daemon.NewWatcher(daemon.WatcherOptions{
+		Interval: cfg.RefreshInterval,
+		Probe: func() (map[string]string, map[string]error) {
+			return discover.ProbeRBLNLibraries(libDirs)
+		},
+		OnChange: func(ctx context.Context, _ daemon.RefreshTrigger) error {
+			// Belt-and-suspenders: tick() already short-circuits on ctx
+			// cancellation, but a tick that started just before shutdown
+			// can land here, and CDI generation does I/O against the host
+			// filesystem we're about to clean up. Skip in that case.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Println("INFO: cdi-watcher: regenerating CDI spec due to UMD version change")
+			return regenerateCDISpec(cfg.CDISpecDir, cfg.HostRootMount, cfg.DriverRoot, cfg.ContainerLibraryPath)
+		},
+		StatusHook: d.PublishWatcherStatus,
+	})
+}
+
+// refreshLibDirs returns the directories the watcher globs for librbln-*.so*.
+// It mirrors the search root that regenerateCDISpec uses (hostRoot+driverRoot)
+// so the watcher and the CDI generator observe the same filesystem view —
+// CoreOS/driver-container deployments install libs under driverRoot
+// (e.g. /run/rbln/driver) on the host, which becomes /host/run/rbln/driver
+// inside the daemon container.
+func refreshLibDirs(hostRoot, driverRoot string) []string {
+	dirs := config.LoadDefault().SearchPaths.Libraries
+	prefix := joinSearchPrefix(hostRoot, driverRoot)
+	if prefix == "" || prefix == "/" {
+		return dirs
+	}
+	rooted := make([]string, len(dirs))
+	for i, d := range dirs {
+		rooted[i] = rerootUnder(prefix, d)
+	}
+	return rooted
+}
+
+// joinSearchPrefix combines hostRoot and driverRoot into the single prefix
+// the daemon uses to address the host filesystem from inside its container.
+// filepath.Join already handles a leading "/" on driverRoot correctly on
+// Unix, but the explicit TrimPrefix removes any ambiguity for reviewers
+// and is a no-op when driverRoot is already relative.
+func joinSearchPrefix(hostRoot, driverRoot string) string {
+	driverRoot = strings.TrimPrefix(driverRoot, "/")
+	if driverRoot == "" {
+		return hostRoot
+	}
+	if hostRoot == "" || hostRoot == "/" {
+		return "/" + driverRoot
+	}
+	return filepath.Join(hostRoot, driverRoot)
+}
+
+// rerootUnder explicitly re-roots an absolute filesystem path beneath a
+// non-empty prefix. We could rely on filepath.Join's documented Unix
+// behavior ("/host"+"/usr/lib64" → "/host/usr/lib64"), but stripping the
+// leading slash before joining makes the intent unambiguous and avoids
+// triggering reviewer concern about Join's handling of absolute trailing
+// arguments.
+func rerootUnder(prefix, abs string) string {
+	return filepath.Join(prefix, strings.TrimPrefix(abs, "/"))
+}
+
+// regenerateCDISpec writes /var/run/cdi/rbln.yaml using the current host
+// state. It is shared between the initial daemon setup and the watcher
+// callback, so a driver upgrade triggers exactly the same generation flow as
+// startup. It deliberately does NOT touch the runtime configuration or
+// restart the runtime: containerd / cri-o read the CDI file at container
+// start time, so an atomic rewrite is enough for new containers to pick up
+// the new spec.
+func regenerateCDISpec(cdiDir, hostRoot, driverRoot, containerLibraryPath string) error {
 	log.Println("INFO: Generating CDI specification...")
 
 	cfg := config.LoadDefault()
 	cfg.DriverRoot = driverRoot
 
-	// When running in container (hostRoot != "/"), set SearchRoot for file access
-	// SearchRoot is used to find files, while DriverRoot is used for CDI paths
+	// SearchRoot re-roots host-side file lookups (libraries, tools, devices)
+	// when the daemon runs inside a container — DriverRoot, by contrast,
+	// stays as the path embedded in CDI specs that container runtimes will
+	// consume on the host. The two diverge whenever hostRoot != "/".
 	if hostRoot != "/" && hostRoot != "" {
-		cfg.SearchRoot = filepath.Join(hostRoot, driverRoot)
+		cfg.SearchRoot = joinSearchPrefix(hostRoot, driverRoot)
 		log.Printf("DEBUG: Search root set to: %s", cfg.SearchRoot)
 	}
 
@@ -255,6 +349,19 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 
 	if err := cdisetup.GenerateCDISpec(opts); err != nil {
 		return fmt.Errorf("generate CDI spec: %w", err)
+	}
+	return nil
+}
+
+func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath string) error {
+	if hostRoot != "/" && hostRoot != "" {
+		if err := installHookBinary(hostRoot); err != nil {
+			log.Printf("WARNING: Failed to install hook binary: %v", err)
+		}
+	}
+
+	if err := regenerateCDISpec(cdiDir, hostRoot, driverRoot, containerLibraryPath); err != nil {
+		return err
 	}
 
 	// Configure runtime
