@@ -217,6 +217,16 @@ func (l *daemonLogger) Debug(msg string, args ...interface{}) {
 	}
 }
 
+// isKubernetesRuntime reports whether the given runtime is one where
+// device-plugin / DRA owns per-allocation device injection. CTK suppresses
+// its static device-node emission for those runtimes so that the dynamic
+// allocation isn't masked by /dev/rsd0 etc. being pinned in the runtime CDI
+// device. Docker is intentionally excluded: it has no allocator, so CTK keeps
+// injecting devices the way v0.1.1 did.
+func isKubernetesRuntime(rt runtime.RuntimeType) bool {
+	return rt == runtime.RuntimeContainerd || rt == runtime.RuntimeCRIO
+}
+
 func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath string) error {
 	if hostRoot != "/" && hostRoot != "" {
 		if err := installHookBinary(hostRoot); err != nil {
@@ -238,6 +248,17 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 
 	if containerLibraryPath != "" {
 		cfg.Libraries.ContainerPath = containerLibraryPath
+	}
+
+	// Kubernetes runtimes delegate device-node injection to device-plugin / DRA,
+	// which allocate RSD group devices dynamically per-Pod. Emitting the host's
+	// static /dev/rbln*, /dev/rsd* nodes into the runtime CDI device would
+	// override that allocation and pin /dev/rsd0 onto every Pod (DOLIN issue
+	// reported on v0.1.1). Docker has no such allocator, so it keeps the
+	// v0.1.1 behavior of letting CTK inject the device nodes.
+	if isKubernetesRuntime(rt) {
+		cfg.Devices.Disabled = true
+		log.Printf("INFO: Runtime %s detected; device-node emission disabled (device-plugin owns per-Pod device injection)", rt)
 	}
 
 	specPath := cdiDir + "/rbln.yaml"
