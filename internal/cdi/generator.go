@@ -104,9 +104,18 @@ func (g *generator) createContainerEdits(result *discover.DiscoveryResult) specs
 			edits.Mounts = append(edits.Mounts, &mount)
 		}
 
-		for _, dev := range result.Devices {
-			deviceNode := g.createDeviceNode(dev)
-			edits.DeviceNodes = append(edits.DeviceNodes, &deviceNode)
+		// Skip device-node emission when explicitly disabled (Kubernetes path):
+		// device-plugin / DRA owns per-allocation device injection there, and
+		// pinning discovered nodes (notably /dev/rsd0) into the runtime device
+		// would override the dynamic allocation. setup.GenerateCDISpec already
+		// skips constructing a discoverer when disabled, but defending here too
+		// keeps the behavior intact for callers that wire result.Devices
+		// independently.
+		if !g.cfg.Devices.Disabled {
+			for _, dev := range result.Devices {
+				deviceNode := g.createDeviceNode(dev)
+				edits.DeviceNodes = append(edits.DeviceNodes, &deviceNode)
+			}
 		}
 
 		// create-symlinks hook MUST come before update-ldcache hook

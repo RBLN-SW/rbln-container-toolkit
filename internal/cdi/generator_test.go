@@ -1437,3 +1437,27 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 	assert.Contains(t, output, "hostPath: /dev/rbln0")
 	assert.Contains(t, output, "permissions: rw")
 }
+
+func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
+	// Given: caller still hands us discovered devices, but Devices.Disabled is set
+	// (Kubernetes path: device-plugin owns per-Pod device injection, so CTK must
+	// not pin /dev/rsd0 et al. into the runtime CDI device).
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Devices.Disabled = true
+	gen := NewGenerator(cfg)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: runtime device exists with no deviceNodes leaked.
+	require.NoError(t, err)
+	require.Len(t, spec.Devices, 1)
+	assert.Empty(t, spec.Devices[0].ContainerEdits.DeviceNodes,
+		"Devices.Disabled must suppress device-node emission even when result.Devices is populated")
+}
