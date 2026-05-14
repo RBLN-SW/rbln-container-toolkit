@@ -19,9 +19,12 @@ on:
 permissions:
   contents: read
 
+# Skip on the public mirror — self-hosted runners and required secrets only
+# exist on the internal repo, so jobs would queue indefinitely there.
 jobs:
   lint:
     name: Lint
+    if: github.repository != 'RBLN-SW/rbln-container-toolkit'
     runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +40,7 @@ jobs:
 
   test:
     name: Test
+    if: github.repository != 'RBLN-SW/rbln-container-toolkit'
     runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +54,7 @@ jobs:
 
   build:
     name: Build
+    if: github.repository != 'RBLN-SW/rbln-container-toolkit'
     runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +73,7 @@ jobs:
   # are built on a host with the real Rebellions UMD installed.
   build-rblnml:
     name: Build (rblnml)
+    if: github.repository != 'RBLN-SW/rbln-container-toolkit'
     runs-on: ssw-ubuntu-22.04-large
     steps:
       - uses: actions/checkout@v4
