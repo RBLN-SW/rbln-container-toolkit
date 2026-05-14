@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Auto-regenerate CDI spec on UMD driver upgrades** (DOLIN-1800): the
+  daemon now polls embedded `rbln version:` strings inside `librbln-*.so`
+  and rewrites `/var/run/cdi/rbln.yaml` whenever it sees a change. Picks up
+  driver re-install / upgrade transparently so newly started containers
+  bind to the current libraries instead of the stale ones baked in at
+  daemon start.
+  - New `--refresh-interval` flag / `RBLN_CTK_DAEMON_REFRESH_INTERVAL`
+    env var (default `60s`, `0` disables). Libraries are auto-discovered
+    via `librbln-*.so*`, so operators don't need to configure paths.
+  - CDI writes are now atomic (tmp + `fsync` + `rename`) so a regen in
+    flight can never produce a torn read for the runtime reading the spec.
+  - `/ready` health endpoint adds a `cdi-refresh` block reporting
+    `last_run`, library count, and the last callback error if any.
+  - Host-side `rbln-cdi-refresh.path` / `.service` units stay as-is; this
+    only adds an in-daemon refresh path for DaemonSet deployments.
 - **Per-device NPU selection** (DOLIN-1219): the generated CDI spec now exposes
   one entry per discovered NPU (`rebellions.ai/npu=0`, `=1`, ...), one entry
   per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry that
