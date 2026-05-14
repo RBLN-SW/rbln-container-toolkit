@@ -10,13 +10,19 @@
   daemon start.
   - New `--refresh-interval` flag / `RBLN_CTK_DAEMON_REFRESH_INTERVAL`
     env var (default `60s`, `0` disables). Libraries are auto-discovered
-    via `librbln-*.so*`, so operators don't need to configure paths.
+    in the standard lib dirs, so operators don't need to configure paths.
   - CDI writes are now atomic (tmp + `fsync` + `rename`) so a regen in
     flight can never produce a torn read for the runtime reading the spec.
   - `/ready` health endpoint adds a `cdi-refresh` block reporting
     `last_run`, library count, and the last callback error if any.
   - Host-side `rbln-cdi-refresh.path` / `.service` units stay as-is; this
     only adds an in-daemon refresh path for DaemonSet deployments.
+  - Probe scope is limited to UMD libraries that actually embed the
+    `rbln version:` marker (`librbln-ccl`, `librbln-thunk`). `librbln-ml`
+    ships without the marker, so a broader glob produced a perpetual
+    `probe failed` warning on every tick without contributing any signal;
+    both libraries flip versions in lockstep on driver upgrade so change
+    detection stays sufficient.
 - **Per-device NPU selection** (DOLIN-1219): the generated CDI spec now exposes
   one entry per discovered NPU (`rebellions.ai/npu=0`, `=1`, ...), one entry
   per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry that
