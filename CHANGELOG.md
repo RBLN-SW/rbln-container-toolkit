@@ -65,9 +65,12 @@
     standalone Docker hosts where `rbln-ctk cdi generate` runs directly and
     operators rely on automatic NPU↔RSD mapping. The packages declare
     `librbln-ml` as a runtime dependency.
-  - `make build` / `make test` defaults remain the stub flavor for CI and
-    contributor laptops; `make build-rblnml` / `make test-rblnml` and the
-    CI matrix's commented `rblnml` row opt into the cgo path.
+  - `make build` / `make test` defaults stay pure-Go (`CGO_ENABLED=0`, no
+    build tags) for CI smoke tests and contributor laptops without a
+    librbln-ml install. `make build-rblnml` / `make test-rblnml` (or
+    `make build-rblnml-ci`, which builds the in-tree stub first) opt
+    into the cgo path; the release pipeline uses `build-rblnml-ci` so
+    shipped DEB/RPM binaries carry the librbln-ml NEEDED entry.
 - **Breaking**: `rebellions.ai/npu=runtime` is gone. Existing manifests must
   switch to `rebellions.ai/npu=all` (same behavior) or a per-device selector.
 
