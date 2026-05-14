@@ -34,6 +34,13 @@ if [[ "${TAG}" != *-rc* ]] && [[ "${TAG}" == v* ]]; then
     TAGS="${TAGS} -t ${IMAGE}:latest"
 fi
 
+# Login to Docker Hub for base-image pulls (alpine, golang). Anonymous pulls
+# hit the unauthenticated rate limit on shared runner IPs; this token has
+# Public Repo Read only.
+if [ -n "${DOCKERHUB_PULL_USER:-}" ] && [ -n "${DOCKERHUB_PULL_TOKEN:-}" ]; then
+    echo "${DOCKERHUB_PULL_TOKEN}" | docker login docker.io -u "${DOCKERHUB_PULL_USER}" --password-stdin
+fi
+
 # Login to Harbor (skip for dry run)
 if [ "${DRY_RUN}" != "true" ] && [ -n "${SSW_HARBOR_USERNAME:-}" ] && [ -n "${SSW_HARBOR_PASSWORD:-}" ]; then
     echo "${SSW_HARBOR_PASSWORD}" | docker login "${REGISTRY}" -u "${SSW_HARBOR_USERNAME}" --password-stdin
