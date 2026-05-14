@@ -269,16 +269,21 @@ func TestProbeLibraryVersion_MissingFileReturnsNotExist(t *testing.T) {
 }
 
 func TestProbeRBLNLibraries_GlobsAndDedupes(t *testing.T) {
-	// Given two lib dirs: one with two real RBLN libs and a symlink, the other empty
+	// Given two lib dirs: one with two real RBLN libs and a symlink chain,
+	// the other empty
 	dirA := t.TempDir()
 	dirB := t.TempDir()
-	mlPath := writeFakeLib(t, dirA, "librbln-ml.so.1.2.3", "1.2.3")
+	thunkPath := writeFakeLib(t, dirA, "librbln-thunk.so.1.2.3", "1.2.3")
 	cclPath := writeFakeLib(t, dirA, "librbln-ccl.so.4.5.6", "4.5.6")
-	// Symlink chain: librbln-ml.so -> librbln-ml.so.1 -> librbln-ml.so.1.2.3
-	require.NoError(t, os.Symlink(filepath.Base(mlPath), filepath.Join(dirA, "librbln-ml.so.1")))
-	require.NoError(t, os.Symlink("librbln-ml.so.1", filepath.Join(dirA, "librbln-ml.so")))
+	// Symlink chain: librbln-thunk.so -> librbln-thunk.so.1 -> librbln-thunk.so.1.2.3
+	require.NoError(t, os.Symlink(filepath.Base(thunkPath), filepath.Join(dirA, "librbln-thunk.so.1")))
+	require.NoError(t, os.Symlink("librbln-thunk.so.1", filepath.Join(dirA, "librbln-thunk.so")))
 	// A non-RBLN library that must not be picked up
 	require.NoError(t, os.WriteFile(filepath.Join(dirA, "libfoo.so"), []byte("not rbln"), 0o644))
+	// librbln-ml is intentionally excluded from the probe globs because the
+	// driver does not embed the version marker into it; a file matching the
+	// old broad glob must NOT contribute to the probe result anymore.
+	require.NoError(t, os.WriteFile(filepath.Join(dirA, "librbln-ml.so"), []byte("no marker"), 0o644))
 
 	// When
 	versions, errs := ProbeRBLNLibraries([]string{dirA, dirB, "/nonexistent/dir"})
@@ -288,15 +293,15 @@ func TestProbeRBLNLibraries_GlobsAndDedupes(t *testing.T) {
 	// (e.g. on macOS /tmp resolves to /private/tmp).
 	require.Empty(t, errs)
 	assert.Equal(t, map[string]string{
-		realPath(t, mlPath):  "1.2.3",
-		realPath(t, cclPath): "4.5.6",
+		realPath(t, thunkPath): "1.2.3",
+		realPath(t, cclPath):   "4.5.6",
 	}, versions)
 }
 
 func TestProbeRBLNLibraries_LibsWithoutMarkerAreReportedAsErrors(t *testing.T) {
-	// Given a lib that matches the glob but lacks the version marker
+	// Given a lib that matches a probe glob but lacks the version marker
 	dir := t.TempDir()
-	bad := filepath.Join(dir, "librbln-broken.so")
+	bad := filepath.Join(dir, "librbln-ccl.so")
 	require.NoError(t, os.WriteFile(bad, []byte("no marker here"), 0o644))
 
 	// When
@@ -313,6 +318,29 @@ func realPath(t *testing.T, p string) string {
 	r, err := filepath.EvalSymlinks(p)
 	require.NoError(t, err)
 	return r
+}
+
+func TestProbeRBLNLibraries_SkipsLibrariesWithoutMarkerContract(t *testing.T) {
+	// Regression guard for the watcher-noise fix: the probe must scope itself
+	// to UMD libraries that embed `rbln version: ` (ccl, thunk). librbln-ml is
+	// shipped without the marker on real driver builds, so the broader
+	// `librbln-*.so*` glob caused a permanent ErrVersionNotFound warning on
+	// every tick. Filtering at the glob layer (not by demoting the error)
+	// keeps the errs map empty so the watcher's log stream stays quiet.
+	dir := t.TempDir()
+	writeFakeLib(t, dir, "librbln-ccl.so.3.0.0", "3.0.0")
+	writeFakeLib(t, dir, "librbln-thunk.so.3.0.0", "3.0.0")
+	// ml exists on the host but carries no marker; it must be skipped entirely.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "librbln-ml.so"), []byte("no marker"), 0o644))
+	// Files that happen to match `librbln-*.so` but are not in the probe list
+	// (e.g. a hypothetical librbln-future.so) must likewise be ignored until
+	// they are explicitly opted in.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "librbln-future.so"), []byte("no marker"), 0o644))
+
+	versions, errs := ProbeRBLNLibraries([]string{dir})
+
+	assert.Empty(t, errs, "non-probed librbln-*.so files must not surface as errors")
+	assert.Len(t, versions, 2, "only the two opted-in libraries should be probed")
 }
 
 func TestProbeRBLNLibraries_NoLibsReturnsEmpty(t *testing.T) {

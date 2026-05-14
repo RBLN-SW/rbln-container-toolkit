@@ -28,11 +28,19 @@ import (
 	rbln_errors "github.com/RBLN-SW/rbln-container-toolkit/internal/errors"
 )
 
-// rblnLibraryGlob is the filename pattern used to discover RBLN UMD shared
-// libraries. Multiple .so files (e.g. librbln-ml.so, librbln-ccl.so,
-// librbln-thunk.so) may be installed by a single driver package; the watcher
-// probes them all so a version bump in any one is detected.
-const rblnLibraryGlob = "librbln-*.so*"
+// rblnLibraryGlobs lists the filename patterns for RBLN UMD shared libraries
+// that embed the `rbln version: ` marker. The driver currently bakes the
+// marker into librbln-ccl and librbln-thunk only; librbln-ml is shipped
+// without it, so a broad `librbln-*.so*` glob would produce a perpetual
+// ErrVersionNotFound warning for ml on every probe tick without contributing
+// any signal. Probing the two libraries that do carry the marker is still
+// sufficient for change detection: they ship as one package, so a driver
+// upgrade flips both versions in lockstep. Re-add entries here when a new
+// library starts embedding the marker.
+var rblnLibraryGlobs = []string{
+	"librbln-ccl.so*",
+	"librbln-thunk.so*",
+}
 
 // versionMarker is the byte sequence the RBLN UMD libraries embed immediately
 // before their version string in the read-only data section. Driver team
@@ -175,12 +183,16 @@ func ProbeRBLNLibraries(libDirs []string) (versions map[string]string, errs map[
 
 	seen := make(map[string]struct{})
 	for _, dir := range libDirs {
-		matches, err := filepath.Glob(filepath.Join(dir, rblnLibraryGlob))
-		if err != nil {
-			// filepath.Glob only returns ErrBadPattern, which our literal
-			// pattern cannot trigger; surface defensively rather than panic.
-			errs[dir] = err
-			continue
+		var matches []string
+		for _, pat := range rblnLibraryGlobs {
+			m, err := filepath.Glob(filepath.Join(dir, pat))
+			if err != nil {
+				// filepath.Glob only returns ErrBadPattern, which our literal
+				// patterns cannot trigger; surface defensively rather than panic.
+				errs[dir] = err
+				continue
+			}
+			matches = append(matches, m...)
 		}
 		for _, m := range matches {
 			resolved, err := filepath.EvalSymlinks(m)
