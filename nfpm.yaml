@@ -63,10 +63,20 @@ scripts:
   postinstall: ./deployments/scripts/postinstall.sh
   preremove: ./deployments/scripts/preremove.sh
 
+# Runtime dependencies. DEB/RPM packages target standalone Docker hosts where
+# operators invoke `rbln-ctk cdi generate` directly and rely on automatic
+# NPU↔RSD mapping — so the packaged binaries are the librbln-ml-backed cgo
+# build (`make build-rblnml`), and `librbln-ml` must be resolvable by the
+# dynamic linker. The Rebellions UMD/driver package installs it on supported
+# distros. The K8s-focused Docker image builds without cgo and ships with no
+# librbln-ml dependency; the two distribution flavors are intentionally
+# asymmetric (see deployments/container/Dockerfile for the K8s rationale).
 overrides:
   deb:
     depends:
       - libc6
+      - librbln-ml
   rpm:
     depends:
       - glibc
+      - librbln-ml

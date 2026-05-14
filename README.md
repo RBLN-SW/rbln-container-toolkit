@@ -29,7 +29,7 @@ RBLN Container Toolkit enables container runtimes to access [Rebellions](https:/
                                                  ▼
                           ┌──────────────────────────────────────────┐
   Container               │  $ docker run --device rebellions.ai/    │
-                          │      npu=runtime my-app                  │
+                          │      npu=all my-app  # or npu=0          │
                           │                                          │
                           │  ✓ RBLN libraries mounted                │
                           │  ✓ Tools available (rbln-smi)            │
@@ -80,9 +80,33 @@ The package installs all three binaries and systemd units automatically.
 ```bash
 git clone https://github.com/RBLN-SW/rbln-container-toolkit.git
 cd rbln-container-toolkit
-make build
+make build           # pure-Go static binaries, no host dependencies
 sudo make install
 ```
+
+#### Build flavors
+
+The toolkit ships in two flavors that target different deployments:
+
+| Flavor | Make target | Distribution artifact | RSD auto-attach |
+|---|---|---|---|
+| **Stub (pure-Go)** | `make build` | Docker image (`deployments/container/Dockerfile`) — what Kubernetes DaemonSet deployments pull. | Off. The daemon's K8s path (`Devices.Disabled=true` on containerd/CRI-O) hands RSD ownership to the device-plugin and `setup.resolveTopology` short-circuits to `NoopResolver`, so `librbln-ml` is never called. |
+| **rblnml (cgo)** | `make build-rblnml` | DEB / RPM (`make package-deb`, `make package-rpm`) — for standalone Docker hosts where operators run `rbln-ctk cdi generate` directly. | On. Each spec generation queries `librbln-ml` once to record every NPU's GroupID and attaches the resolved `/dev/rsdM` to per-NPU CDI entries. |
+
+Host requirements:
+
+| Flavor | Build host | Runtime host |
+|---|---|---|
+| Stub | Go ≥ 1.24 | nothing (binary is static, no host libraries) |
+| rblnml | Go ≥ 1.24, `librbln-ml` + headers (the Rebellions UMD/driver package ships both) | `librbln-ml.so` resolvable by `ld.so` — DEB/RPM declares `librbln-ml` as a package dependency to enforce this |
+
+The Go bindings (`go-rbln-ml`) ship in-tree under
+[`third_party/`](third_party/go-rbln-ml/VENDORED.md) so neither flavor needs
+external GitHub credentials to build the toolkit.
+
+`make test` and `make test-rblnml` follow the same split — the stub-flavor
+test suite is what CI runs by default, and `test-rblnml` exercises the cgo
+path when the driver is available locally.
 
 ## Quick Start
 
@@ -96,7 +120,10 @@ sudo rbln-ctk cdi generate
 sudo rbln-ctk runtime configure
 
 # 3. Run a container with NPU access
-docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04
+docker run --device rebellions.ai/npu=all -it ubuntu:22.04            # all NPUs
+docker run --device rebellions.ai/npu=0 -it ubuntu:22.04              # NPU 0 only
+docker run --device rebellions.ai/npu=0 --device rebellions.ai/npu=1 \
+  -it ubuntu:22.04                                                    # NPU 0 + 1
 ```
 
 That's it. The toolkit auto-detects your runtime and applies the right configuration.
@@ -111,7 +138,7 @@ rbln-ctk cdi list
 rbln-ctk info
 
 # Use NPU tools inside a container
-docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04 rbln-smi
+docker run --device rebellions.ai/npu=all -it ubuntu:22.04 rbln-smi
 ```
 
 ### Preview Before Applying
@@ -171,9 +198,24 @@ sudo systemctl restart containerd  # or crio, docker
 
 #### Step 4: Run Containers
 
+Each generated spec exposes one CDI entry per NPU plus a few group handles:
+
+| Entry | What gets mounted |
+|---|---|
+| `rebellions.ai/npu=N` | `/dev/rblnN` plus the RSD group device (`/dev/rsdM`) the NPU is assigned to. Auto-attachment requires the `with_rblnml` build (links against `librbln-ml`); the default pure-Go build leaves the entry NPU-only and logs a warning at spec generation so operators can add `--device rebellions.ai/npu=rsdM` explicitly or rebuild with the tag. |
+| `rebellions.ai/npu=rsdM` | `/dev/rsdM` — for explicit group selection (custom-group setups, debugging, or as a workaround in the pure-Go build). |
+| `rebellions.ai/npu=all` | Every discovered `/dev/rbln*` and `/dev/rsd*`. Use this when you want to expose the whole host. |
+
 ```bash
-# Docker
-docker run --device rebellions.ai/npu=runtime -it ubuntu:22.04
+# Docker — single NPU
+docker run --device rebellions.ai/npu=0 -it ubuntu:22.04
+
+# Docker — multi NPU
+docker run --device rebellions.ai/npu=0 --device rebellions.ai/npu=1 \
+  -it ubuntu:22.04
+
+# Docker — all NPUs (replaces v0.1.x `npu=runtime`)
+docker run --device rebellions.ai/npu=all -it ubuntu:22.04
 ```
 
 ```yaml

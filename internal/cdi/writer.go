@@ -77,55 +77,68 @@ type yamlSpec struct {
 // toYAMLSpec converts a specs.Spec to yamlSpec for clean YAML output.
 func toYAMLSpec(spec *specs.Spec) yamlSpec {
 	ys := yamlSpec{
-		CDIVersion:  spec.Version,
-		Kind:        spec.Kind,
-		Annotations: spec.Annotations,
+		CDIVersion:     spec.Version,
+		Kind:           spec.Kind,
+		Annotations:    spec.Annotations,
+		ContainerEdits: toYAMLContainerEdits(&spec.ContainerEdits),
 	}
 
-	// Convert devices
 	for i := range spec.Devices {
 		d := &spec.Devices[i]
-		yd := yamlDevice{
-			Name:        d.Name,
-			Annotations: d.Annotations,
-			ContainerEdits: yamlContainerEdits{
-				Env: d.ContainerEdits.Env,
-			},
-		}
-
-		// Convert device nodes
-		for _, dn := range d.ContainerEdits.DeviceNodes {
-			ydn := &yamlDeviceNode{
-				Path:        dn.Path,
-				HostPath:    dn.HostPath,
-				Permissions: dn.Permissions,
-			}
-			yd.ContainerEdits.DeviceNodes = append(yd.ContainerEdits.DeviceNodes, ydn)
-		}
-
-		// Convert mounts
-		for _, m := range d.ContainerEdits.Mounts {
-			ym := &yamlMount{
-				HostPath:      m.HostPath,
-				ContainerPath: m.ContainerPath,
-				Options:       m.Options,
-			}
-			// Only set Type if non-empty
-			if m.Type != "" {
-				ym.Type = m.Type
-			}
-			yd.ContainerEdits.Mounts = append(yd.ContainerEdits.Mounts, ym)
-		}
-
-		// Convert hooks
-		for _, h := range d.ContainerEdits.Hooks {
-			yd.ContainerEdits.Hooks = append(yd.ContainerEdits.Hooks, h)
-		}
-
-		ys.Devices = append(ys.Devices, yd)
+		ys.Devices = append(ys.Devices, yamlDevice{
+			Name:           d.Name,
+			Annotations:    d.Annotations,
+			ContainerEdits: toYAMLContainerEdits(&d.ContainerEdits),
+		})
 	}
 
 	return ys
+}
+
+// toYAMLContainerEdits converts a specs.ContainerEdits to its yaml-tagged
+// wrapper so empty fields are elided in the rendered spec. Used for both
+// top-level (spec.ContainerEdits) and per-device blocks.
+//
+// The wrapper carries every field of specs.ContainerEdits (Env, Mounts,
+// DeviceNodes, Hooks, IntelRdt, AdditionalGIDs); copy each one so callers
+// can rely on the YAML output round-tripping the input without silent
+// loss — the toolkit doesn't populate IntelRdt / AdditionalGIDs today, but
+// downstream consumers may wire them in and the writer mustn't drop them.
+func toYAMLContainerEdits(edits *specs.ContainerEdits) yamlContainerEdits {
+	if edits == nil {
+		return yamlContainerEdits{}
+	}
+	out := yamlContainerEdits{
+		Env:            edits.Env,
+		IntelRdt:       edits.IntelRdt,
+		AdditionalGIDs: edits.AdditionalGIDs,
+	}
+
+	for _, dn := range edits.DeviceNodes {
+		out.DeviceNodes = append(out.DeviceNodes, &yamlDeviceNode{
+			Path:        dn.Path,
+			HostPath:    dn.HostPath,
+			Permissions: dn.Permissions,
+		})
+	}
+
+	for _, m := range edits.Mounts {
+		ym := &yamlMount{
+			HostPath:      m.HostPath,
+			ContainerPath: m.ContainerPath,
+			Options:       m.Options,
+		}
+		if m.Type != "" {
+			ym.Type = m.Type
+		}
+		out.Mounts = append(out.Mounts, ym)
+	}
+
+	for _, h := range edits.Hooks {
+		out.Hooks = append(out.Hooks, h)
+	}
+
+	return out
 }
 
 // Writer writes CDI specifications to files or stdout.

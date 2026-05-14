@@ -37,6 +37,16 @@ ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 
+# This image targets Kubernetes deployments where rbln-ctk-daemon runs as a
+# DaemonSet and the device-plugin (not the toolkit) owns NPU/RSD discovery.
+# `setup.resolveTopology` short-circuits to NoopResolver{} whenever
+# Devices.Disabled=true — the path the daemon takes on containerd/CRI-O —
+# so it never calls into librbln-ml at runtime. That makes the cgo flavor
+# pure dead weight here, and we keep the image as a static-Go build so it
+# stays small and free of host-library dependencies. Standalone Docker
+# users who want auto NPU↔RSD attachment should install the DEB/RPM
+# package instead, which is the cgo flavor and pulls librbln-ml in.
+
 # Install build dependencies
 RUN apk add --no-cache git make
 
@@ -50,7 +60,7 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build all binaries
+# Build all binaries as static (CGO_ENABLED=0, no build tag).
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w \
         -X main.version=${VERSION} \
@@ -76,7 +86,9 @@ LABEL org.opencontainers.image.description="Container toolkit for Rebellions NPU
 LABEL org.opencontainers.image.vendor="Rebellions"
 LABEL org.opencontainers.image.source="https://github.com/RBLN-SW/rbln-container-toolkit"
 
-# Install runtime dependencies (minimal)
+# Install runtime dependencies (minimal). No librbln-ml here — the binaries
+# are statically linked Go (see builder stage rationale) and the daemon
+# runs in K8s mode where librbln-ml is never called.
 RUN apk add --no-cache \
     ca-certificates \
     && rm -rf /var/cache/apk/*

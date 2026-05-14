@@ -37,7 +37,7 @@ func TestGenerator_Generate_EmptyResult(t *testing.T) {
 		Tools:     []discover.Tool{},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
@@ -60,18 +60,17 @@ func TestGenerator_Generate_WithLibraries(t *testing.T) {
 		Tools: []discover.Tool{},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	device := spec.Devices[0]
-	assert.Equal(t, "runtime", device.Name)
-	assert.GreaterOrEqual(t, len(device.ContainerEdits.Mounts), 2)
-	for _, mount := range device.ContainerEdits.Mounts {
+	require.NotEmpty(t, spec.Devices)
+	assertDeviceNames(t, spec, "all")
+	assert.GreaterOrEqual(t, len(spec.ContainerEdits.Mounts), 2)
+	for _, mount := range spec.ContainerEdits.Mounts {
 		assert.Contains(t, mount.Options, "ro")
 		assert.Contains(t, mount.Options, "bind")
 	}
@@ -86,24 +85,23 @@ func TestGenerator_Generate_WithTools(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	device := spec.Devices[0]
+	require.NotEmpty(t, spec.Devices)
 	var hasToolMount bool
-	for _, mount := range device.ContainerEdits.Mounts {
+	for _, mount := range spec.ContainerEdits.Mounts {
 		if mount.HostPath == "/usr/bin/rbln-smi" {
 			hasToolMount = true
 			break
 		}
 	}
 	assert.True(t, hasToolMount)
-	for _, env := range device.ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "PATH="))
 	}
 }
@@ -117,24 +115,23 @@ func TestGenerator_Generate_EnvVars(t *testing.T) {
 		Tools: []discover.Tool{},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	device := spec.Devices[0]
+	require.NotEmpty(t, spec.Devices)
 	var hasLDPath bool
-	for _, env := range device.ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		if len(env) > 16 && env[:16] == "LD_LIBRARY_PATH=" {
 			hasLDPath = true
 			break
 		}
 	}
 	assert.False(t, hasLDPath)
-	assert.NotEmpty(t, device.ContainerEdits.Hooks)
+	assert.NotEmpty(t, spec.ContainerEdits.Hooks)
 }
 
 func TestGenerator_Generate_CustomVendorClass(t *testing.T) {
@@ -143,7 +140,7 @@ func TestGenerator_Generate_CustomVendorClass(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.CDI.Vendor = "custom.vendor"
 	cfg.CDI.Class = "custom-class"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
@@ -161,15 +158,15 @@ func TestGenerator_Generate_MountOptions(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.ContainerPath)
 	assert.Contains(t, mount.Options, "ro")
@@ -208,21 +205,21 @@ func TestGenerator_Generate_SymlinkHookFromSONAME(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
 
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/usr/lib64/librbln-ml.so.1.0.0", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/librbln-ml.so.1.0.0", mount.ContainerPath)
 
 	var symlinkHook *specs.Hook
-	for _, hook := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, hook := range spec.ContainerEdits.Hooks {
 		if strings.Contains(strings.Join(hook.Args, " "), "create-symlinks") {
 			symlinkHook = hook
 			break
@@ -261,16 +258,16 @@ func TestGenerator_Generate_NoSymlinkHookWhenLinksNotOnHost(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
 
-	for _, hook := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, hook := range spec.ContainerEdits.Hooks {
 		if strings.Contains(strings.Join(hook.Args, " "), "create-symlinks") {
 			t.Error("Should NOT have create-symlinks hook when links don't exist on host")
 		}
@@ -286,15 +283,15 @@ func TestGenerator_Generate_WithSELinuxDisabled(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.SELinux.Enabled = false
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.NotContains(t, mount.Options, "z")
 	assert.NotContains(t, mount.Options, "Z")
 }
@@ -309,15 +306,15 @@ func TestGenerator_Generate_WithSELinuxEnabled_SharedContext(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.SELinux.Enabled = true
 	cfg.SELinux.MountContext = "z"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Contains(t, mount.Options, "z")
 	assert.Contains(t, mount.Options, "ro")
 	assert.Contains(t, mount.Options, "bind")
@@ -333,15 +330,15 @@ func TestGenerator_Generate_WithSELinuxEnabled_PrivateContext(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.SELinux.Enabled = true
 	cfg.SELinux.MountContext = "Z"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Contains(t, mount.Options, "Z")
 	assert.NotContains(t, mount.Options, "z")
 }
@@ -360,15 +357,15 @@ func TestGenerator_Generate_SELinuxAppliedToAllMounts(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.SELinux.Enabled = true
 	cfg.SELinux.MountContext = "z"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	for _, mount := range spec.Devices[0].ContainerEdits.Mounts {
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	for _, mount := range spec.ContainerEdits.Mounts {
 		assert.Contains(t, mount.Options, "z")
 	}
 }
@@ -387,15 +384,15 @@ func TestGenerator_Generate_WithContainerPath_NoLDLibraryPath(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	require.NotEmpty(t, spec.Devices)
+	for _, env := range spec.ContainerEdits.Env {
 		if strings.HasPrefix(env, "LD_LIBRARY_PATH=") {
 			assert.NotContains(t, env, "/rbln:")
 		}
@@ -416,20 +413,20 @@ func TestGenerator_Generate_WithContainerPath_NoLDLibraryPath_WithHook(t *testin
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	require.NotEmpty(t, spec.Devices)
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "LD_LIBRARY_PATH="))
 	}
-	require.NotNil(t, spec.Devices[0].ContainerEdits.Hooks)
-	require.Len(t, spec.Devices[0].ContainerEdits.Hooks, 1)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotNil(t, spec.ContainerEdits.Hooks)
+	require.Len(t, spec.ContainerEdits.Hooks, 1)
+	hook := spec.ContainerEdits.Hooks[0]
 	assert.Equal(t, "createContainer", hook.HookName)
 	assert.Equal(t, "/usr/local/bin/rbln-cdi-hook", hook.Path)
 	assert.Contains(t, hook.Args, "update-ldcache")
@@ -457,15 +454,15 @@ func TestGenerator_Generate_WithContainerPath_MountsUseContainerPath(t *testing.
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	for _, mount := range spec.Devices[0].ContainerEdits.Mounts {
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	for _, mount := range spec.ContainerEdits.Mounts {
 		if strings.Contains(mount.HostPath, "lib") {
 			assert.True(t, strings.HasPrefix(mount.ContainerPath, "/usr/lib64/rbln/"))
 		}
@@ -489,7 +486,7 @@ func TestGenerator_Generate_WithContainerPath_BinaryUnchanged(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
@@ -497,7 +494,7 @@ func TestGenerator_Generate_WithContainerPath_BinaryUnchanged(t *testing.T) {
 	// Then
 	require.NoError(t, err)
 	var toolMount *specs.Mount
-	for _, mount := range spec.Devices[0].ContainerEdits.Mounts {
+	for _, mount := range spec.ContainerEdits.Mounts {
 		if mount.HostPath == "/usr/bin/rbln-smi" {
 			toolMount = mount
 			break
@@ -538,21 +535,21 @@ func TestGenerator_Generate_WithContainerPath_SymlinkHookFromSONAME(t *testing.T
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
 
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/usr/lib64/librbln-ml.so.1.0.0", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/rbln/librbln-ml.so.1.0.0", mount.ContainerPath)
 
 	var symlinkHook *specs.Hook
-	for _, hook := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, hook := range spec.ContainerEdits.Hooks {
 		if strings.Contains(strings.Join(hook.Args, " "), "create-symlinks") {
 			symlinkHook = hook
 			break
@@ -581,24 +578,24 @@ func TestGenerator_Generate_DefaultMode_HasHook(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	require.NotEmpty(t, spec.Devices)
 	var hasLDPath bool
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		if strings.HasPrefix(env, "LD_LIBRARY_PATH=") {
 			hasLDPath = true
 			break
 		}
 	}
 	assert.False(t, hasLDPath)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
+	hook := spec.ContainerEdits.Hooks[0]
 	assert.Equal(t, "createContainer", hook.HookName)
 	assert.Contains(t, hook.Args, "update-ldcache")
 }
@@ -617,16 +614,16 @@ func TestGenerator_Generate_IsolationMode_HasHook(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotEmpty(t, spec.Devices)
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
+	hook := spec.ContainerEdits.Hooks[0]
 	assert.Equal(t, "createContainer", hook.HookName)
 	assert.Equal(t, cfg.Hooks.Path, hook.Path)
 	assert.Contains(t, hook.Args, "rbln-cdi-hook")
@@ -653,16 +650,16 @@ func TestGenerator_Generate_HookHasCorrectFolders(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
 	var ldcacheHook *specs.Hook
-	for _, h := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, h := range spec.ContainerEdits.Hooks {
 		for _, arg := range h.Args {
 			if arg == "update-ldcache" {
 				ldcacheHook = h
@@ -690,15 +687,15 @@ func TestGenerator_Generate_HookHasLdconfigPath(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
 	cfg.Hooks.LdconfigPath = "/usr/sbin/ldconfig"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
+	hook := spec.ContainerEdits.Hooks[0]
 	assert.Contains(t, hook.Env, "RBLN_CDI_HOOK_LDCONFIG_PATH=/usr/sbin/ldconfig")
 }
 
@@ -712,15 +709,15 @@ func TestGenerator_Generate_EmptyLibraries_NoHook(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	assert.Empty(t, spec.Devices[0].ContainerEdits.Hooks)
+	require.NotEmpty(t, spec.Devices)
+	assert.Empty(t, spec.ContainerEdits.Hooks)
 }
 
 // Hook environment variables tests
@@ -740,15 +737,15 @@ func TestGenerator_Generate_HookEnvVariables_FolderAndDebug(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
 	cfg.Debug = true
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
+	hook := spec.ContainerEdits.Hooks[0]
 	require.NotNil(t, hook.Env)
 	require.Len(t, hook.Env, 2)
 	var hasLdconfigPath bool
@@ -779,15 +776,15 @@ func TestGenerator_Generate_HookEnvVariables_DebugFalse(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
 	cfg.Debug = false
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
-	hook := spec.Devices[0].ContainerEdits.Hooks[0]
+	require.NotEmpty(t, spec.ContainerEdits.Hooks)
+	hook := spec.ContainerEdits.Hooks[0]
 	require.NotNil(t, hook.Env)
 	require.Len(t, hook.Env, 2)
 	var hasLdconfigPath bool
@@ -813,21 +810,21 @@ func TestGenerator_Generate_CreateEnvVars_EmptyLibPaths_NoHooks(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	require.NotEmpty(t, spec.Devices)
 	// No libraries = no LD_LIBRARY_PATH expected
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "LD_LIBRARY_PATH="),
 			"LD_LIBRARY_PATH should not be set when no libraries present")
 	}
 	// No libraries = no hooks expected
-	assert.Empty(t, spec.Devices[0].ContainerEdits.Hooks)
+	assert.Empty(t, spec.ContainerEdits.Hooks)
 }
 
 func TestGenerator_Generate_CreateEnvVars_PopulatedLibPaths_WithHooks(t *testing.T) {
@@ -845,21 +842,21 @@ func TestGenerator_Generate_CreateEnvVars_PopulatedLibPaths_WithHooks(t *testing
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	require.NotEmpty(t, spec.Devices)
 	// When hooks are present, LD_LIBRARY_PATH should NOT be set (hooks handle it)
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "LD_LIBRARY_PATH="),
 			"LD_LIBRARY_PATH should not be set when hooks are present")
 	}
 	// Hooks should be present for library discovery
-	assert.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks,
+	assert.NotEmpty(t, spec.ContainerEdits.Hooks,
 		"Hooks should be present when libraries exist")
 }
 
@@ -884,24 +881,24 @@ func TestGenerator_Generate_CreateEnvVars_PopulatedLibPaths_IsolationMode_WithHo
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	require.NotEmpty(t, spec.Devices)
 	// Isolation mode with hooks: LD_LIBRARY_PATH should NOT be set
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "LD_LIBRARY_PATH="),
 			"LD_LIBRARY_PATH should not be set in isolation mode with hooks")
 	}
 	// Hooks should be present for ldcache update
-	assert.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks,
+	assert.NotEmpty(t, spec.ContainerEdits.Hooks,
 		"Hooks should be present in isolation mode")
 	var ldcacheHook *specs.Hook
-	for _, h := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, h := range spec.ContainerEdits.Hooks {
 		for _, arg := range h.Args {
 			if arg == "update-ldcache" {
 				ldcacheHook = h
@@ -941,22 +938,22 @@ func TestGenerator_Generate_CreateEnvVars_MultipleLibraryPaths_WithHooks(t *test
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	require.NotEmpty(t, spec.Devices)
 	// Multiple libraries with hooks: LD_LIBRARY_PATH should NOT be set
-	for _, env := range spec.Devices[0].ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		assert.False(t, strings.HasPrefix(env, "LD_LIBRARY_PATH="),
 			"LD_LIBRARY_PATH should not be set when hooks are present")
 	}
-	assert.NotEmpty(t, spec.Devices[0].ContainerEdits.Hooks)
+	assert.NotEmpty(t, spec.ContainerEdits.Hooks)
 	var ldcacheHook *specs.Hook
-	for _, h := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, h := range spec.ContainerEdits.Hooks {
 		for _, arg := range h.Args {
 			if arg == "update-ldcache" {
 				ldcacheHook = h
@@ -985,23 +982,22 @@ func TestGenerator_Generate_CreateEnvVars_NoEnvVarsWhenHooksPresent(t *testing.T
 	}
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	device := spec.Devices[0]
+	require.NotEmpty(t, spec.Devices)
 
 	// Verify hooks are present
-	require.NotEmpty(t, device.ContainerEdits.Hooks,
+	require.NotEmpty(t, spec.ContainerEdits.Hooks,
 		"Hooks should be present for library discovery")
 
 	// Verify LD_LIBRARY_PATH is NOT in env vars (hooks handle it)
 	ldPathFound := false
-	for _, env := range device.ContainerEdits.Env {
+	for _, env := range spec.ContainerEdits.Env {
 		if strings.HasPrefix(env, "LD_LIBRARY_PATH=") {
 			ldPathFound = true
 			break
@@ -1027,15 +1023,15 @@ func TestGenerator_Generate_DriverRootSet_PathTransformation(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = "/opt/driver"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/opt/driver/usr/lib64/librbln-ml.so", mount.HostPath)
 	// Container path should have driverRoot prefix removed
 	assert.Equal(t, "/opt/driver/usr/lib64/librbln-ml.so", mount.ContainerPath)
@@ -1056,15 +1052,15 @@ func TestGenerator_Generate_DriverRootEmpty_DefaultBehavior(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = ""
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.ContainerPath)
 }
@@ -1084,15 +1080,15 @@ func TestGenerator_Generate_DriverRootSlash_DefaultBehavior(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = "/"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/librbln-ml.so", mount.ContainerPath)
 }
@@ -1111,15 +1107,15 @@ func TestGenerator_Generate_MountOptions_Complete(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.SELinux.Enabled = false
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	// Verify all required mount options
 	assert.Contains(t, mount.Options, "bind")
 	assert.Contains(t, mount.Options, "ro")
@@ -1161,21 +1157,21 @@ func TestGenerator_Generate_SymlinkHookWithDriverRoot(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = "/opt/driver"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
 
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/opt/driver/usr/lib64/librbln-ml.so.1.0.0", mount.HostPath)
 	assert.Equal(t, "/usr/lib64/librbln-ml.so.1.0.0", mount.ContainerPath)
 
 	var symlinkHook *specs.Hook
-	for _, hook := range spec.Devices[0].ContainerEdits.Hooks {
+	for _, hook := range spec.ContainerEdits.Hooks {
 		if strings.Contains(strings.Join(hook.Args, " "), "create-symlinks") {
 			symlinkHook = hook
 			break
@@ -1202,15 +1198,15 @@ func TestGenerator_Generate_DriverRootWithoutLeadingSlash_PathTransformation(t *
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = "opt/driver"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.NotEmpty(t, spec.Devices[0].ContainerEdits.Mounts)
-	mount := spec.Devices[0].ContainerEdits.Mounts[0]
+	require.NotEmpty(t, spec.ContainerEdits.Mounts)
+	mount := spec.ContainerEdits.Mounts[0]
 	assert.Equal(t, "/opt/driver/usr/lib64/librbln-ml.so", mount.HostPath)
 }
 
@@ -1232,7 +1228,7 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Libraries.ContainerPath = "/usr/lib64/rbln"
 	cfg.Debug = true
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 	writer := NewWriter()
 
 	// When - Generate spec and write to buffer
@@ -1254,21 +1250,22 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "options: [ro,", "Mount options should be in flow style (inline array)")
 
-	// 2. Verify devices exist
+	// 2. Verify devices exist — with no NPUs discovered we still emit a single
+	// "all" entry as the named handle for libs/tools injection.
 	devicesRaw, ok := parsed["devices"]
 	require.True(t, ok, "devices field should exist")
 	devices, ok := devicesRaw.([]interface{})
 	require.True(t, ok, "devices should be a list")
-	require.Len(t, devices, 1, "should have exactly one device")
+	require.Len(t, devices, 1, "no NPU discovery → only the `all` entry should remain")
 
-	// 3. Verify device structure
+	// 3. Verify the named handle is "all" (replaces v0.1.x "runtime")
 	device, ok := devices[0].(map[string]interface{})
 	require.True(t, ok, "device should be a map")
-	assert.Equal(t, "runtime", device["name"], "device name should be 'runtime'")
+	assert.Equal(t, "all", device["name"], "named handle should be 'all'")
 
-	// 4. Verify containerEdits exists
-	editsRaw, ok := device["containerEdits"]
-	require.True(t, ok, "containerEdits should exist")
+	// 4. Verify top-level containerEdits (libs/tools/hooks/env now live there)
+	editsRaw, ok := parsed["containerEdits"]
+	require.True(t, ok, "top-level containerEdits should exist")
 	edits, ok := editsRaw.(map[string]interface{})
 	require.True(t, ok, "containerEdits should be a map")
 
@@ -1359,8 +1356,8 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	assert.True(t, debugEnvFound, "RBLN_CDI_HOOK_DEBUG env var should exist")
 }
 
-func TestGenerator_Generate_WithDevices(t *testing.T) {
-	// Given
+func TestGenerator_Generate_WithDevices_PerNPUEntries(t *testing.T) {
+	// Given: a typical discovery with two NPUs and one RSD group device.
 	result := &discover.DiscoveryResult{
 		Devices: []discover.Device{
 			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
@@ -1369,24 +1366,139 @@ func TestGenerator_Generate_WithDevices(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: per-NPU "0"/"1", per-RSD "rsd0", and "all" entries all exist.
+	require.NoError(t, err)
+	assertDeviceNames(t, spec, "0", "1", "rsd0", "all")
+
+	// Per-NPU entries carry exactly their own rbln node.
+	npu0 := findDevice(t, spec, "0")
+	require.Len(t, npu0.ContainerEdits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rbln0", npu0.ContainerEdits.DeviceNodes[0].Path)
+	assert.Equal(t, "rw", npu0.ContainerEdits.DeviceNodes[0].Permissions)
+
+	npu1 := findDevice(t, spec, "1")
+	require.Len(t, npu1.ContainerEdits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rbln1", npu1.ContainerEdits.DeviceNodes[0].Path)
+
+	// Per-RSD entry exposes the group device by its driver basename.
+	rsd0 := findDevice(t, spec, "rsd0")
+	require.Len(t, rsd0.ContainerEdits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rsd0", rsd0.ContainerEdits.DeviceNodes[0].Path)
+
+	// "all" entry mirrors the full device set.
+	all := findDevice(t, spec, "all")
+	require.Len(t, all.ContainerEdits.DeviceNodes, 3)
+}
+
+func TestGenerator_Generate_ResolverAttachesRSDPerNPU(t *testing.T) {
+	// Given: a resolver that knows NPU 0 → group 1 and NPU 1 → group 2.
+	// This is the production path — librbln-ml will be queried in Phase 2 to
+	// produce the same mapping, but here we drive it with a fake so the
+	// generator can be exercised without cgo.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rbln1", ContainerPath: "/dev/rbln1"},
+			{Path: "/dev/rsd1", ContainerPath: "/dev/rsd1"},
+			{Path: "/dev/rsd2", ContainerPath: "/dev/rsd2"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	resolver := &fakeResolver{mapping: map[uint32]uint32{0: 1, 1: 2}}
+	gen := NewGenerator(cfg, resolver)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: each per-NPU entry carries its rbln node AND the resolved
+	// /dev/rsdM, so `--device rebellions.ai/npu=0` is functional on its own.
+	require.NoError(t, err)
+	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0", "/dev/rsd1")
+	assertDevicePaths(t, findDevice(t, spec, "1"), "/dev/rbln1", "/dev/rsd2")
+
+	// Top-level is RSD-free now — the resolver handles attachment.
+	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
+		"top-level must carry no device nodes; per-NPU entries own RSD attachment")
+}
+
+func TestGenerator_Generate_ResolverUnknownMapping_NpuOnly(t *testing.T) {
+	// Given: a resolver that doesn't know NPU 0's group (driver unreachable,
+	// pre-Phase-2 stub build, or K8s mode where device-plugin owns mapping).
+	// The per-NPU entry must still be valid but limited to the rbln node.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg, nil) // nil → NoopResolver
 
 	// When
 	spec, err := gen.Generate(result)
 
 	// Then
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
+	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0")
+	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
+		"no resolver mapping → no RSD anywhere except the explicit per-RSD entry and `all`")
+}
 
-	edits := spec.Devices[0].ContainerEdits
-	require.Len(t, edits.DeviceNodes, 3)
+func TestGenerator_Generate_ResolverPointsToMissingRSD_NpuOnly(t *testing.T) {
+	// Given: a resolver claims NPU 0 belongs to group 5, but /dev/rsd5 isn't
+	// present on the host (out-of-sync driver state, custom userland setup).
+	// The generator must not invent device nodes that don't exist — drop the
+	// RSD attachment for this NPU and emit a warning-worthy "rbln only" entry.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	resolver := &fakeResolver{mapping: map[uint32]uint32{0: 5}}
+	gen := NewGenerator(cfg, resolver)
 
-	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].Path)
-	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].HostPath)
-	assert.Equal(t, "rw", edits.DeviceNodes[0].Permissions)
+	// When
+	spec, err := gen.Generate(result)
 
-	assert.Equal(t, "/dev/rbln1", edits.DeviceNodes[1].Path)
-	assert.Equal(t, "/dev/rsd0", edits.DeviceNodes[2].Path)
+	// Then
+	require.NoError(t, err)
+	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0")
+}
+
+// fakeResolver is the test double used to exercise resolver-driven mapping
+// without bringing librbln-ml into unit tests. Each entry is "NPU index → RSD
+// group index"; unmapped NPUs trigger ok=false, matching production behavior
+// when the driver doesn't know.
+type fakeResolver struct {
+	mapping map[uint32]uint32
+}
+
+func (f *fakeResolver) Resolve(npu uint32) (uint32, bool) {
+	if f == nil {
+		return 0, false
+	}
+	rsd, ok := f.mapping[npu]
+	return rsd, ok
+}
+
+// assertDevicePaths checks that a CDI device entry carries exactly the given
+// device-node paths in order. Used heavily by per-NPU tests where the
+// expected node set is small and order-dependent (rbln first, then optional
+// resolved rsd).
+func assertDevicePaths(t *testing.T, dev specs.Device, paths ...string) {
+	t.Helper()
+	got := make([]string, 0, len(dev.ContainerEdits.DeviceNodes))
+	for _, n := range dev.ContainerEdits.DeviceNodes {
+		got = append(got, n.Path)
+	}
+	assert.Equal(t, paths, got, "device %q nodes", dev.Name)
 }
 
 func TestGenerator_Generate_WithDevices_DriverRoot(t *testing.T) {
@@ -1398,17 +1510,17 @@ func TestGenerator_Generate_WithDevices_DriverRoot(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.DriverRoot = "/run/rbln/driver"
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
-	// Then
+	// Then: per-NPU entry keeps host path mapping intact.
 	require.NoError(t, err)
-	edits := spec.Devices[0].ContainerEdits
-	require.Len(t, edits.DeviceNodes, 1)
-	assert.Equal(t, "/dev/rbln0", edits.DeviceNodes[0].Path)
-	assert.Equal(t, "/run/rbln/driver/dev/rbln0", edits.DeviceNodes[0].HostPath)
+	npu0 := findDevice(t, spec, "0")
+	require.Len(t, npu0.ContainerEdits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rbln0", npu0.ContainerEdits.DeviceNodes[0].Path)
+	assert.Equal(t, "/run/rbln/driver/dev/rbln0", npu0.ContainerEdits.DeviceNodes[0].HostPath)
 }
 
 func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
@@ -1419,7 +1531,7 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 	writer := NewWriter()
 
 	// When
@@ -1430,18 +1542,20 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 	err = writer.WriteToWriter(spec, &buf, "yaml")
 	require.NoError(t, err)
 
-	// Then: YAML output should contain deviceNodes
+	// Then: YAML output should contain the per-NPU entry's deviceNode block.
 	output := buf.String()
 	assert.Contains(t, output, "deviceNodes:")
 	assert.Contains(t, output, "path: /dev/rbln0")
 	assert.Contains(t, output, "hostPath: /dev/rbln0")
 	assert.Contains(t, output, "permissions: rw")
+	assert.Contains(t, output, "name: \"0\"")
+	assert.Contains(t, output, "name: all")
 }
 
 func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
-	// Given: caller still hands us discovered devices, but Devices.Disabled is set
-	// (Kubernetes path: device-plugin owns per-Pod device injection, so CTK must
-	// not pin /dev/rsd0 et al. into the runtime CDI device).
+	// Given: caller still hands us discovered devices, but Devices.Disabled is
+	// set (Kubernetes path: device-plugin owns per-Pod device injection, so
+	// CTK must not pin /dev/rsd0 et al. into the CDI spec).
 	result := &discover.DiscoveryResult{
 		Devices: []discover.Device{
 			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
@@ -1450,14 +1564,50 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Devices.Disabled = true
-	gen := NewGenerator(cfg)
+	gen := NewGenerator(cfg, nil)
 
 	// When
 	spec, err := gen.Generate(result)
 
-	// Then: runtime device exists with no deviceNodes leaked.
+	// Then: only the "all" library/tool handle survives; no device nodes
+	// anywhere — neither top-level (default RSD suppressed) nor per-device
+	// (no per-NPU/per-RSD entries emitted at all).
 	require.NoError(t, err)
-	require.Len(t, spec.Devices, 1)
-	assert.Empty(t, spec.Devices[0].ContainerEdits.DeviceNodes,
-		"Devices.Disabled must suppress device-node emission even when result.Devices is populated")
+	assertDeviceNames(t, spec, "all")
+	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
+		"Devices.Disabled must suppress the default RSD in top-level edits")
+	all := findDevice(t, spec, "all")
+	assert.Empty(t, all.ContainerEdits.DeviceNodes,
+		"Devices.Disabled must keep the `all` entry free of device nodes")
+}
+
+// findDevice returns the CDI device entry with the given name or fails the test.
+// Tests use this instead of indexing into spec.Devices because per-NPU,
+// per-RSD, and "all" entries are interleaved in append order — searching by
+// name keeps assertions readable as the entry layout evolves.
+func findDevice(t *testing.T, spec *specs.Spec, name string) specs.Device {
+	t.Helper()
+	for _, d := range spec.Devices {
+		if d.Name == name {
+			return d
+		}
+	}
+	t.Fatalf("device %q not found in spec (have: %v)", name, deviceNames(spec))
+	return specs.Device{}
+}
+
+// assertDeviceNames checks that spec.Devices has exactly the given names in
+// the given order. Tests use the ordering guarantee to catch accidental
+// reshuffles that would surface to end-users as a churn in `rbln-ctk cdi list`.
+func assertDeviceNames(t *testing.T, spec *specs.Spec, want ...string) {
+	t.Helper()
+	assert.Equal(t, want, deviceNames(spec))
+}
+
+func deviceNames(spec *specs.Spec) []string {
+	out := make([]string, 0, len(spec.Devices))
+	for _, d := range spec.Devices {
+		out = append(out, d.Name)
+	}
+	return out
 }

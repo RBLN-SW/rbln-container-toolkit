@@ -1,5 +1,69 @@
 # RBLN Container Toolkit Changelog
 
+## Unreleased
+
+- **Per-device NPU selection** (DOLIN-1219): the generated CDI spec now exposes
+  one entry per discovered NPU (`rebellions.ai/npu=0`, `=1`, ...), one entry
+  per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry that
+  replaces the legacy `=runtime` handle. Containers can opt in to a subset of
+  the host's NPUs via `docker run --device rebellions.ai/npu=0
+  --device rebellions.ai/npu=1`. Multi-entry selection composes additively
+  through CDI's standard merge rules.
+- Library mounts, tool mounts, and ldcache/symlink hooks moved to the
+  top-level `containerEdits` block so they apply to any `npu=*` selection
+  without being duplicated per entry. Per-NPU entries carry their own
+  `/dev/rbln{N}` plus the RSD group node the NPU belongs to (attached via the
+  new `topology.RsdResolver` abstraction — see below). The Kubernetes path
+  (`Devices.Disabled=true`) emits only the `all` library/tool handle with no
+  device nodes; device-plugin / DRA continues to own per-Pod device
+  injection.
+- New `internal/topology` package introduces the `RsdResolver` interface that
+  the CDI generator consults to attach the correct RSD group device to each
+  per-NPU entry. The default `NoopResolver` reports "no mapping known" so a
+  `--device rebellions.ai/npu=N` selection produces an NPU-only entry until
+  the librbln-ml-backed resolver kicks in.
+- Vendor the [go-rbln-ml](https://github.com/RBLN-SW/go-rbln-ml) Go bindings
+  under `third_party/go-rbln-ml/` and wire them in via `replace` in `go.mod`.
+  The upstream module is private at snapshot time, so vendoring lets every
+  builder (CI runners, dev laptops, hardware QA servers) build the toolkit
+  with no credentials configured. When the bindings ship publicly we drop
+  the `third_party/` directory and the `replace` line; see
+  `third_party/go-rbln-ml/VENDORED.md` for the resync procedure.
+- Add a librbln-ml-backed `RsdResolver` behind the `with_rblnml` build tag.
+  It walks `rblnmlDeviceGetCount` → `DeviceGetHandleByIndex` →
+  `GetDeviceInfo` once per spec generation, caches the resulting NPU→GroupID
+  map, and releases the device handles immediately — the daemon never holds
+  `/dev/rbln*` opens between regen cycles. Builds without the tag (the
+  default) fall through to `NoopResolver{}` with an operator-visible warning
+  via `topology.LoadOrFallback`. Production builds for hosts with the
+  Rebellions driver should use `go build -tags with_rblnml` and link against
+  `librbln-ml`; the Phase-3 follow-up will flip the default build to use
+  cgo + the tag once the CI/packaging story is settled.
+- Build infrastructure & distribution split:
+  - **Docker image** (`deployments/container/Dockerfile`) stays pure-Go
+    (`CGO_ENABLED=0`). It targets Kubernetes DaemonSet deployments where
+    `Devices.Disabled=true` already routes `setup.resolveTopology` through
+    `NoopResolver`, so the cgo bindings would be dead weight — and the
+    static image keeps no `librbln-ml.so` dependency.
+  - **DEB / RPM packages** (`make package-deb`, `make package-rpm`) build
+    with `make build-rblnml` (`CGO_ENABLED=1 -tags with_rblnml`). They target
+    standalone Docker hosts where `rbln-ctk cdi generate` runs directly and
+    operators rely on automatic NPU↔RSD mapping. The packages declare
+    `librbln-ml` as a runtime dependency.
+  - `make build` / `make test` defaults remain the stub flavor for CI and
+    contributor laptops; `make build-rblnml` / `make test-rblnml` and the
+    CI matrix's commented `rblnml` row opt into the cgo path.
+- **Breaking**: `rebellions.ai/npu=runtime` is gone. Existing manifests must
+  switch to `rebellions.ai/npu=all` (same behavior) or a per-device selector.
+
+  Migration cheat sheet:
+
+  | Before (v0.1.x) | After (v0.2.0) |
+  |---|---|
+  | `--device rebellions.ai/npu=runtime` | `--device rebellions.ai/npu=all` |
+  | (n/a — was always all-or-nothing) | `--device rebellions.ai/npu=0 --device rebellions.ai/npu=1` |
+  | (n/a) | `--device rebellions.ai/npu=rsd2` (custom RSD group) |
+
 ## v0.1.2
 
 - Stop pinning host device nodes (`/dev/rbln*`, `/dev/rsd*`) into the runtime

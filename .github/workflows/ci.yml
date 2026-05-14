@@ -36,7 +36,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests
-        run: go test -race -cover ./...
+        run: make test
 
   build:
     name: Build
@@ -50,3 +50,54 @@ jobs:
 
       - name: Build all binaries
         run: make build
+
+  # Smoke-test the rblnml-flavored build (CGO_ENABLED=1, -tags with_rblnml)
+  # against the in-tree stub librbln-ml.so so the cgo + link path can't
+  # silently regress when nobody packages a release. The stub satisfies the
+  # linker only — binaries produced here are NOT shipped; release packages
+  # are built on a host with the real Rebellions UMD installed.
+  build-rblnml:
+    name: Build (rblnml)
+    runs-on: ssw-ubuntu-22.04-large
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build librbln-ml stub
+        run: ./hack/ci/build-librbln-ml-stub.sh "${{ runner.temp }}/stub"
+
+      - name: Build rblnml flavor against stub
+        env:
+          LIBRARY_PATH: ${{ runner.temp }}/stub
+          LD_LIBRARY_PATH: ${{ runner.temp }}/stub
+        run: make build-rblnml
+
+      - name: Verify ELF NEEDED references librbln-ml
+        run: |
+          # Only rbln-ctk and rbln-ctk-daemon import internal/cdi/setup →
+          # internal/topology, so only those should link against librbln-ml.
+          # rbln-cdi-hook runs ldconfig/symlink ops inside the container and
+          # never touches the resolver, so its absence of NEEDED librbln-ml
+          # is correct — checking it would catch a non-bug.
+          for bin in rbln-ctk rbln-ctk-daemon; do
+            if ! readelf -d "./bin/${bin}" | grep -q 'NEEDED.*librbln-ml.so'; then
+              echo "::error::./bin/${bin} did not link against librbln-ml — cgo path likely fell through to stub"
+              readelf -d "./bin/${bin}" | grep NEEDED || true
+              exit 1
+            fi
+          done
+          # Defensive check on rbln-cdi-hook: if a future refactor accidentally
+          # pulls topology into it, the resulting NEEDED would silently bloat
+          # the hook binary and add a runtime dependency it doesn't need.
+          if readelf -d ./bin/rbln-cdi-hook | grep -q 'NEEDED.*librbln-ml.so'; then
+            echo "::error::./bin/rbln-cdi-hook unexpectedly links librbln-ml — refactor probably pulled internal/topology in"
+            exit 1
+          fi
+          echo "OK: rbln-ctk and rbln-ctk-daemon record NEEDED librbln-ml.so; rbln-cdi-hook does not."
+
+# When the DEB/RPM packaging story moves to CI, add a dedicated `package`
+# job that reuses the stub above (or installs the real librbln-ml package
+# for release builds) and invokes `make package-deb` / `make package-rpm`.

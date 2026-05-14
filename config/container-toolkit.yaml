@@ -18,7 +18,9 @@ cdi:
   vendor: rebellions.ai
 
   # CDI device class (forms part of device identifier)
-  # Device name will be: rebellions.ai/npu=runtime
+  # Generated entries are: rebellions.ai/npu=N (per NPU),
+  #                        rebellions.ai/npu=rsdM (per RSD group),
+  #                        rebellions.ai/npu=all  (every discovered device)
   class: npu
 
 # Library discovery settings

@@ -21,6 +21,23 @@ GOFLAGS := -v
 GOOS ?= linux
 GOARCH ?= amd64
 
+# CGO + build tag controls.
+#
+# Default (CGO_ENABLED=0, no BUILD_TAGS): pure-Go static binary, no host
+# dependencies — what the open-source toolkit ships as today and what CI
+# defaults to so that runners without the Rebellions UMD can still build.
+#
+# Production deployments that want automatic NPU↔RSD attachment in the CDI
+# spec must build with `BUILD_TAGS=with_rblnml CGO_ENABLED=1` (the convenience
+# targets `build-rblnml` / `test-rblnml` set both). That requires `librbln-ml`
+# (shared library + headers) installed on the build host; the resulting
+# binary also needs `librbln-ml.so` reachable via the dynamic linker at
+# runtime. Hosts where users run `rbln-ctk cdi generate` already have it as
+# part of the driver install, so the runtime requirement is usually a no-op.
+CGO_ENABLED ?= 0
+BUILD_TAGS ?=
+TAG_FLAGS := $(if $(BUILD_TAGS),-tags $(BUILD_TAGS),)
+
 # Package directories
 PKG_DIR := ./dist
 
@@ -37,7 +54,7 @@ E2E_IMAGE_UBUNTU_2404 ?= ubuntu:24.04
 E2E_IMAGE_RHEL9 ?= redhat/ubi9:latest
 E2E_IMAGE ?= $(E2E_IMAGE_UBUNTU_2204)
 
-.PHONY: all build build-ctk build-hook build-daemon clean test lint fmt vet vendor install help package package-deb package-rpm docker-build docker-push docker-builder ginkgo test-integration test-e2e test-e2e-local test-e2e-ubuntu2204 test-e2e-ubuntu2404 test-e2e-rhel9 test-e2e-all-images test-all clean-e2e generate
+.PHONY: all build build-ctk build-hook build-daemon build-rblnml build-rblnml-ci ci-librbln-ml-stub clean test test-rblnml lint fmt vet vendor install help package package-deb package-rpm docker-build docker-push docker-builder ginkgo test-integration test-e2e test-e2e-local test-e2e-ubuntu2204 test-e2e-ubuntu2404 test-e2e-rhel9 test-e2e-all-images test-all clean-e2e generate
 
 ## all: Build everything
 all: fmt vet lint test build
@@ -47,21 +64,43 @@ build: build-ctk build-hook build-daemon
 
 ## build-ctk: Build the main CLI binary
 build-ctk:
-	@echo "Building $(BINARY_NAME)..."
+	@echo "Building $(BINARY_NAME) (CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS)')..."
 	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(TAG_FLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_DIR)
 
 ## build-hook: Build the CDI hook binary
 build-hook:
-	@echo "Building $(HOOK_BINARY_NAME)..."
+	@echo "Building $(HOOK_BINARY_NAME) (CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS)')..."
 	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "-X main.Version=$(VERSION)" -o $(BIN_DIR)/$(HOOK_BINARY_NAME) $(HOOK_CMD_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(TAG_FLAGS) -ldflags "-X main.Version=$(VERSION)" -o $(BIN_DIR)/$(HOOK_BINARY_NAME) $(HOOK_CMD_DIR)
 
 ## build-daemon: Build the daemon binary
 build-daemon:
-	@echo "Building $(DAEMON_BINARY_NAME)..."
+	@echo "Building $(DAEMON_BINARY_NAME) (CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS)')..."
 	@mkdir -p $(BIN_DIR)
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(DAEMON_BINARY_NAME) $(DAEMON_CMD_DIR)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(TAG_FLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(DAEMON_BINARY_NAME) $(DAEMON_CMD_DIR)
+
+## build-rblnml: Build all binaries with the librbln-ml-backed RSD resolver.
+## Requires librbln-ml (shared library + headers) on the build host.
+build-rblnml:
+	@$(MAKE) CGO_ENABLED=1 BUILD_TAGS=with_rblnml build
+
+## ci-librbln-ml-stub: Compile the CI-only stub librbln-ml.so under
+## build/ci-stub/. Wires the resulting directory into LIBRARY_PATH /
+## LD_LIBRARY_PATH for the current `make` invocation so a follow-up
+## `make build-rblnml` finds the stub without further env setup. Linux
+## only; the stub mirrors the upstream ABI via the bundled header.
+ci-librbln-ml-stub:
+	@./hack/ci/build-librbln-ml-stub.sh $(CURDIR)/build/ci-stub
+
+## build-rblnml-ci: Convenience for CI runners — build the stub then
+## immediately compile the rblnml flavor against it. Mirrors what the
+## CI workflow does so contributors can reproduce a runner failure
+## locally on a Linux host.
+build-rblnml-ci: ci-librbln-ml-stub
+	LIBRARY_PATH=$(CURDIR)/build/ci-stub$${LIBRARY_PATH:+:$$LIBRARY_PATH} \
+	LD_LIBRARY_PATH=$(CURDIR)/build/ci-stub$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH} \
+	$(MAKE) build-rblnml
 
 ## clean: Remove build artifacts
 clean:
@@ -70,14 +109,24 @@ clean:
 	@$(GO) clean -cache -testcache
 
 ## test: Run unit tests
+## Race detection requires cgo, so the test target intentionally lets
+## CGO_ENABLED default to "1" on the host (Go's default on Linux) rather
+## than pinning CGO_ENABLED=0. The static-binary contract only applies to
+## build artifacts; tests are not shipped.
 test:
-	@echo "Running tests..."
-	$(GO) test -v -race -cover ./...
+	@echo "Running tests (BUILD_TAGS='$(BUILD_TAGS)')..."
+	$(GO) test $(TAG_FLAGS) -v -race -cover ./...
+
+## test-rblnml: Run unit tests with the librbln-ml-backed resolver path.
+## Compiles every package against the rblnml cgo bindings; requires librbln-ml
+## installed on the host. Tests that hit the real driver are gated separately.
+test-rblnml:
+	@$(MAKE) BUILD_TAGS=with_rblnml test
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
 	@echo "Running tests with coverage..."
-	$(GO) test -v -race -coverprofile=coverage.out ./...
+	$(GO) test $(TAG_FLAGS) -v -race -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
@@ -127,15 +176,17 @@ uninstall:
 ## package: Build all packages (deb and rpm)
 package: package-deb package-rpm
 
-## package-deb: Build Debian package
-package-deb: build
+## package-deb: Build Debian package (cgo flavor — needs librbln-ml on the
+## build host; the resulting .deb declares `librbln-ml` as a dependency).
+package-deb: build-rblnml
 	@echo "Building Debian package..."
 	@mkdir -p $(PKG_DIR)
 	@which nfpm > /dev/null 2>&1 || (echo "Installing nfpm..." && go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest)
 	VERSION=$(VERSION) GOARCH=$(GOARCH) nfpm package --packager deb --target $(PKG_DIR)/
 
-## package-rpm: Build RPM package
-package-rpm: build
+## package-rpm: Build RPM package (cgo flavor — needs librbln-ml on the
+## build host; the resulting .rpm declares `librbln-ml` as a dependency).
+package-rpm: build-rblnml
 	@echo "Building RPM package..."
 	@mkdir -p $(PKG_DIR)
 	@which nfpm > /dev/null 2>&1 || (echo "Installing nfpm..." && go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest)

@@ -18,8 +18,10 @@ package setup
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,18 +29,29 @@ import (
 
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/config"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/discover"
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/topology"
 )
 
-// mockLogger captures log messages for testing.
+// mockLogger captures log messages for testing. Each method formats msg+args
+// via fmt.Sprintf so tests see the substituted text — same contract as the
+// production daemonLogger (which goes through log.Printf). Without this,
+// resolveTopology's warn closure would store "RSD topology resolver: %v ..."
+// verbatim and tests couldn't assert on the underlying error string.
 type mockLogger struct {
 	infos    []string
 	warnings []string
 	debugs   []string
 }
 
-func (m *mockLogger) Info(msg string, _ ...interface{})    { m.infos = append(m.infos, msg) }
-func (m *mockLogger) Warning(msg string, _ ...interface{}) { m.warnings = append(m.warnings, msg) }
-func (m *mockLogger) Debug(msg string, _ ...interface{})   { m.debugs = append(m.debugs, msg) }
+func (m *mockLogger) Info(msg string, args ...interface{}) {
+	m.infos = append(m.infos, fmt.Sprintf(msg, args...))
+}
+func (m *mockLogger) Warning(msg string, args ...interface{}) {
+	m.warnings = append(m.warnings, fmt.Sprintf(msg, args...))
+}
+func (m *mockLogger) Debug(msg string, args ...interface{}) {
+	m.debugs = append(m.debugs, fmt.Sprintf(msg, args...))
+}
 
 // mockLibraryDiscoverer implements discover.LibraryDiscoverer for testing.
 type mockLibraryDiscoverer struct {
@@ -572,4 +585,140 @@ func TestGenerateCDISpecToWriter_DefaultFormat(t *testing.T) {
 	// Then it should succeed using default yaml format
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "cdiVersion")
+}
+
+// staticResolver pins a NPU→RSD mapping for tests so we can assert that
+// Options.RsdResolver short-circuits the auto-load path.
+type staticResolver struct{ m map[uint32]uint32 }
+
+func (s staticResolver) Resolve(npu uint32) (uint32, bool) {
+	rsd, ok := s.m[npu]
+	return rsd, ok
+}
+
+func TestResolveTopology_HonorsExplicitResolver(t *testing.T) {
+	// Given a caller-supplied resolver, resolveTopology must hand it back
+	// unchanged so tests and future Phase-2 callers can pin a known
+	// topology without triggering the librbln-ml auto-load.
+	want := staticResolver{m: map[uint32]uint32{0: 7}}
+	logger := &mockLogger{}
+	opts := &Options{
+		Config:      &config.Config{},
+		Logger:      logger,
+		RsdResolver: want,
+	}
+
+	got := resolveTopology(opts)
+
+	rsd, ok := got.Resolve(0)
+	require.True(t, ok)
+	assert.Equal(t, uint32(7), rsd)
+	assert.Empty(t, logger.warnings,
+		"explicit resolver path must NOT trigger the librbln-ml fallback warning")
+}
+
+func TestResolveTopology_DevicesDisabled_SkipsLoad(t *testing.T) {
+	// Given Devices.Disabled=true (K8s path) — device-plugin owns RSD
+	// allocation, so resolveTopology must skip the librbln-ml load entirely
+	// rather than open /dev/rbln* and emit a warning the operator can't act on.
+	logger := &mockLogger{}
+	opts := &Options{
+		Config: &config.Config{
+			Devices: config.DeviceConfig{Disabled: true},
+		},
+		Logger: logger,
+	}
+
+	got := resolveTopology(opts)
+
+	_, ok := got.Resolve(0)
+	assert.False(t, ok, "K8s path must use NoopResolver")
+	assert.Empty(t, logger.warnings,
+		"K8s path must not emit a fallback warning since it never tried to load")
+	assert.IsType(t, topology.NoopResolver{}, got)
+}
+
+func TestResolveTopology_AutoLoadFallsBackInStubBuild(t *testing.T) {
+	// Given the default (no with_rblnml) build, resolveTopology must invoke
+	// LoadOrFallback and surface the warning through the caller's logger so
+	// operators see "RSD attachment unavailable" in journald rather than
+	// finding it the hard way when a container fails to start.
+	logger := &mockLogger{}
+	opts := &Options{
+		Config: &config.Config{},
+		Logger: logger,
+	}
+
+	got := resolveTopology(opts)
+
+	_, ok := got.Resolve(0)
+	assert.False(t, ok, "stub build must fall back to NoopResolver")
+	require.NotEmpty(t, logger.warnings, "fallback must emit a warning")
+	assert.True(t, strings.Contains(strings.ToLower(logger.warnings[0]), "rsd"),
+		"warning should mention RSD so operators can correlate: %q", logger.warnings[0])
+}
+
+func TestResolveTopology_NilLoggerTolerated(t *testing.T) {
+	// Defensive: minimal call sites (early bootstrap, tests) may not have a
+	// logger configured. resolveTopology must still return a working
+	// resolver rather than panic on the nil dereference.
+	opts := &Options{Config: &config.Config{}}
+
+	got := resolveTopology(opts)
+
+	_, ok := got.Resolve(0)
+	assert.False(t, ok)
+}
+
+func TestResolveTopology_LogsLoadStats(t *testing.T) {
+	// Operators monitoring the daemon need to see whether the rblnml load
+	// succeeded, fell back, or returned a partial mapping — the difference
+	// between "0 NPUs mapped because the host has none" and "0 NPUs mapped
+	// because the driver call failed" is invisible without this Info line.
+	// In the stub build the load always falls back, so the log line should
+	// reflect that.
+	logger := &mockLogger{}
+	opts := &Options{
+		Config: &config.Config{},
+		Logger: logger,
+	}
+
+	_ = resolveTopology(opts)
+
+	require.NotEmpty(t, logger.infos,
+		"resolveTopology must emit an Info line summarizing the load outcome")
+	assert.Contains(t, strings.ToLower(logger.infos[0]), "rsd topology",
+		"summary should start with the recognizable RSD topology prefix: %q", logger.infos[0])
+}
+
+func TestResolveTopology_ExplicitResolver_NoInfoLog(t *testing.T) {
+	// When the caller pins a resolver explicitly (tests, future bootstrap
+	// flows), we shouldn't pretend to have done a load — emitting a stale
+	// "fallback to no-op" line would mislead operators reading the logs.
+	logger := &mockLogger{}
+	opts := &Options{
+		Config:      &config.Config{},
+		Logger:      logger,
+		RsdResolver: staticResolver{m: map[uint32]uint32{0: 1}},
+	}
+
+	_ = resolveTopology(opts)
+
+	assert.Empty(t, logger.infos,
+		"explicit resolver path must not emit a load-summary log line")
+}
+
+func TestResolveTopology_DevicesDisabled_NoInfoLog(t *testing.T) {
+	// K8s path skips the load entirely — no log line, since there's nothing
+	// to summarize and the operator already knows device-plugin owns RSD.
+	logger := &mockLogger{}
+	opts := &Options{
+		Config: &config.Config{Devices: config.DeviceConfig{Disabled: true}},
+		Logger: logger,
+	}
+
+	_ = resolveTopology(opts)
+
+	assert.Empty(t, logger.infos,
+		"K8s path skips the load, so it must not emit a topology summary")
 }

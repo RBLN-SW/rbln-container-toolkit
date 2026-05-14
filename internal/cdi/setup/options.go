@@ -19,6 +19,7 @@ package setup
 import (
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/config"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/discover"
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/topology"
 )
 
 // ErrorMode defines how errors are handled during CDI setup.
@@ -59,6 +60,11 @@ type Options struct {
 	ToolDiscoverer discover.ToolDiscoverer
 	// DeviceDiscoverer is used for device node discovery (optional, for testing).
 	DeviceDiscoverer discover.DeviceDiscoverer
+	// RsdResolver maps each NPU to its assigned RSD group. nil falls back to
+	// topology.NoopResolver{} — per-NPU CDI entries then carry only the rbln
+	// node and users must add `--device rebellions.ai/npu=rsdM` explicitly.
+	// Production builds inject the librbln-ml-backed resolver.
+	RsdResolver topology.RsdResolver
 }
 
 // Option is a function that modifies SetupOptions.
