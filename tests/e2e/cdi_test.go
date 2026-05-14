@@ -77,7 +77,7 @@ var _ = Describe("CDI", Label("no-hardware"), func() {
 			validSpec := `cdiVersion: "0.5.0"
 kind: "rebellions.ai/npu"
 devices:
-  - name: "runtime"
+  - name: "all"
     containerEdits:
       env:
         - "RBLN_VISIBLE_DEVICES=all"

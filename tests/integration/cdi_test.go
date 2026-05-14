@@ -112,7 +112,7 @@ func TestCDIValidateCommand(t *testing.T) {
 		validSpec := `cdiVersion: "0.5.0"
 kind: "rebellions.ai/npu"
 devices:
-  - name: "runtime"
+  - name: "all"
     containerEdits:
       env:
         - "RBLN_VISIBLE_DEVICES=all"

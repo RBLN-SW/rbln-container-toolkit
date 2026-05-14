@@ -22,7 +22,48 @@ import (
 
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/cdi"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/discover"
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/topology"
 )
+
+// resolveTopology returns the resolver the generator should consult for
+// per-NPU RSD attachment. Callers may pin a specific implementation via
+// Options.RsdResolver (tests typically do); otherwise we attempt to load the
+// librbln-ml-backed resolver and fall back to NoopResolver{} when the driver
+// isn't reachable or the binary was built without the with_rblnml tag — in
+// either case the warning is routed through the caller's logger so a missing
+// RSD mapping is visible in operator logs rather than silently ignored.
+//
+// The outcome of the load — NPUs mapped, NPUs that failed, wall-clock cost,
+// and whether we fell back — is emitted as an Info log line on the success
+// path so operators monitoring the daemon (or just tailing CLI output) can
+// confirm the resolver is doing what they expect. Without this signal, a
+// regression where the librbln-ml call silently returns an empty mapping
+// would look identical to "no NPUs on the host" — both produce per-NPU
+// entries without RSD attachment, with no visible distinction.
+func resolveTopology(opts *Options) topology.RsdResolver {
+	if opts.RsdResolver != nil {
+		return opts.RsdResolver
+	}
+	// K8s path: device-plugin owns RSD allocation, so skip the rblnml load
+	// entirely — opening /dev/rbln* here would be wasted work and might
+	// race with device-plugin's own handles.
+	if opts.Config != nil && opts.Config.Devices.Disabled {
+		return topology.NoopResolver{}
+	}
+	warn := func(format string, args ...any) {
+		if opts.Logger != nil {
+			opts.Logger.Warning(format, args...)
+		}
+	}
+	resolver, stats := topology.LoadOrFallbackWithStats(warn)
+	if opts.Logger != nil {
+		// stats.String() never embeds format codes, so passing it as the
+		// message with no args is safe even for loggers that go through
+		// fmt.Printf-family functions internally.
+		opts.Logger.Info("%s", stats.String())
+	}
+	return resolver
+}
 
 // GenerateCDISpec discovers resources and generates a CDI specification.
 func GenerateCDISpec(opts *Options) error {
@@ -58,7 +99,7 @@ func GenerateCDISpec(opts *Options) error {
 		result = &discover.DiscoveryResult{}
 	}
 
-	generator := cdi.NewGenerator(opts.Config)
+	generator := cdi.NewGenerator(opts.Config, resolveTopology(opts))
 	spec, err := generator.Generate(result)
 	if err != nil {
 		return fmt.Errorf("generate CDI spec: %w", err)
@@ -115,7 +156,7 @@ func GenerateCDISpecToWriter(w io.Writer, opts *Options) error {
 		result = &discover.DiscoveryResult{}
 	}
 
-	generator := cdi.NewGenerator(opts.Config)
+	generator := cdi.NewGenerator(opts.Config, resolveTopology(opts))
 	spec, err := generator.Generate(result)
 	if err != nil {
 		return fmt.Errorf("generate CDI spec: %w", err)

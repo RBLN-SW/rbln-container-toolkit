@@ -3,6 +3,7 @@ module github.com/RBLN-SW/rbln-container-toolkit
 go 1.24.0
 
 require (
+	github.com/RBLN-SW/go-rbln-ml v0.0.0-20260318125644-68b7042e8d3a
 	github.com/moby/sys/reexec v0.1.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
@@ -35,3 +36,5 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
+
+replace github.com/RBLN-SW/go-rbln-ml => ./third_party/go-rbln-ml

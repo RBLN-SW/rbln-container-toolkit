@@ -287,8 +287,14 @@ func generateCDISpec(cdiSpecDir, hostRootMount string) error {
 		Tools:     tools,
 	}
 
-	// Generate CDI spec
-	gen := cdi.NewGenerator(cfg)
+	// Generate CDI spec. The installer path intentionally skips the
+	// librbln-ml-backed RSD resolver: the installer typically runs before
+	// the driver is healthy / loaded, so loading rblnml here would either
+	// fail or return a stale snapshot. Passing nil routes the generator
+	// through topology.NoopResolver{}, producing a spec without auto-
+	// attached RSD nodes — the daemon/CLI path picks up the real resolver
+	// once the driver is up and regenerates the spec.
+	gen := cdi.NewGenerator(cfg, nil)
 	spec, err := gen.Generate(result)
 	if err != nil {
 		return fmt.Errorf("failed to generate CDI spec: %w", err)
