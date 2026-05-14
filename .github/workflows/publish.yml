@@ -11,9 +11,12 @@ on:
 permissions:
   contents: read
 
+# Skip on the public mirror — self-hosted runners and required secrets only
+# exist on the internal repo, so jobs would fail there even if dispatched.
 jobs:
   mirror:
     name: Mirror to Public Repo
+    if: github.repository != 'RBLN-SW/rbln-container-toolkit'
     runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 10
     env:
@@ -33,7 +36,7 @@ jobs:
   dockerhub:
     name: Push to Docker Hub
     needs: mirror
-    if: ${{ !contains(inputs.tag, '-rc') }}
+    if: ${{ github.repository != 'RBLN-SW/rbln-container-toolkit' && !contains(inputs.tag, '-rc') }}
     runs-on: ssw-ubuntu-22.04-large
     timeout-minutes: 15
     env:
