@@ -52,3 +52,28 @@ jobs:
           ref: main
       - name: Push to Docker Hub
         run: ./hack/release-dockerhub.sh "${{ inputs.tag }}"
+
+  public-nexus:
+    name: Push to Public Nexus
+    needs: mirror
+    # Skip on the public mirror (same rationale as mirror/dockerhub jobs):
+    # self-hosted runner labels and the required Nexus secrets only exist on
+    # the internal repo, so a dispatch on RBLN-SW/rbln-container-toolkit would
+    # sit forever waiting for a runner that never picks it up.
+    if: ${{ github.repository != 'RBLN-SW/rbln-container-toolkit' && !contains(inputs.tag, '-rc') }}
+    runs-on: ssw-ubuntu-22.04-large
+    timeout-minutes: 20
+    env:
+      NEXUS_PUBLIC_URL: ${{ secrets.NEXUS_PUBLIC_URL }}
+      NEXUS_PUBLIC_USERNAME: ${{ secrets.NEXUS_PUBLIC_USERNAME }}
+      NEXUS_PUBLIC_PASSWORD: ${{ secrets.NEXUS_PUBLIC_PASSWORD }}
+    steps:
+      # See mirror job for rationale on `ref: main`.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Push to public Nexus
+        run: ./hack/release-nexus-public.sh "${{ inputs.tag }}"
