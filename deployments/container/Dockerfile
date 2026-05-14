@@ -53,8 +53,11 @@ RUN apk add --no-cache git make
 # Set working directory
 WORKDIR /build
 
-# Copy go mod files first for better layer caching
+# Copy go mod files (and the vendored go-rbln-ml replace target referenced
+# from go.mod) first for better layer caching. third_party/ ships the
+# bindings in-tree until the upstream module goes public.
 COPY go.mod go.sum ./
+COPY third_party/ ./third_party/
 RUN go mod download
 
 # Copy source code
