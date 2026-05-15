@@ -1,6 +1,6 @@
 # RBLN Container Toolkit Changelog
 
-## Unreleased
+## v0.2.0
 
 - **Auto-regenerate CDI spec on UMD driver upgrades**: the
   daemon now polls embedded `rbln version:` strings inside `librbln-*.so`
