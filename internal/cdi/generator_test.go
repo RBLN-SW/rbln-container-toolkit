@@ -1572,8 +1572,13 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 	// Given: caller still hands us discovered devices, but Devices.Disabled is
 	// set (Kubernetes path: device-plugin owns per-Pod device injection, so
-	// CTK must not pin /dev/rsd0 et al. into the CDI spec).
+	// CTK must not pin /dev/rsd0 et al. into the CDI spec). Libraries are also
+	// populated so the spec has real common edits — without them the generator
+	// would emit a fully-empty spec and the post-fold step has nothing to do.
 	result := &discover.DiscoveryResult{
+		Libraries: []discover.Library{
+			{Name: "librbln-ml.so", Path: "/usr/lib64/librbln-ml.so", ContainerPath: "/usr/lib64/librbln-ml.so", Type: discover.LibraryTypeRBLN},
+		},
 		Devices: []discover.Device{
 			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
 			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
@@ -1587,12 +1592,11 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 	spec, err := gen.Generate(result)
 
 	// Then: only the "all" library/tool handle (and its "runtime" alias)
-	// survive; no device nodes anywhere — neither top-level (default RSD
-	// suppressed) nor per-device (no per-NPU/per-RSD entries emitted at all).
+	// survive; no device nodes anywhere — neither in either device entry
+	// (no per-NPU/per-RSD entries emitted at all) nor folded from a
+	// previously-populated top-level block.
 	require.NoError(t, err)
 	assertDeviceNames(t, spec, "all", "runtime")
-	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
-		"Devices.Disabled must suppress the default RSD in top-level edits")
 	all := findDevice(t, spec, "all")
 	assert.Empty(t, all.ContainerEdits.DeviceNodes,
 		"Devices.Disabled must keep the `all` entry free of device nodes")
@@ -1612,6 +1616,50 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 		"unused IntelRdt must not be rendered (typed-nil leak regression guard)")
 	assert.NotContains(t, output, "additionalGids:",
 		"unused AdditionalGIDs must not be rendered")
+	// CDI parsers reject `containerEdits: {}` — the K8s path used to emit
+	// exactly that for `all`/`runtime`, which masked the entire spec as
+	// unresolvable. The Generate post-step folds spec-level common edits
+	// into the empty entries so they never marshal as `{}`.
+	assert.NotContains(t, output, "containerEdits: {}",
+		"empty device edits must not appear in rendered YAML (CDI parser rejects them)")
+}
+
+// TestGenerator_Generate_DevicesDisabled_NoEmptyDeviceEdits is the K8s-path
+// half of the empty-device-edits guard: after the Generate post-step folds
+// spec-level common edits into the otherwise-empty `all`/`runtime` entries,
+// each device must carry the hooks/mounts/env that used to live spec-level,
+// and the spec-level block must be empty (so the same content isn't applied
+// twice when a runtime merges spec-level + device-level edits).
+func TestGenerator_Generate_DevicesDisabled_NoEmptyDeviceEdits(t *testing.T) {
+	// Given: K8s path with libs/tools so common edits are non-empty, and
+	// Devices.Disabled=true so no per-NPU device entries are emitted.
+	result := &discover.DiscoveryResult{
+		Libraries: []discover.Library{
+			{Name: "librbln-ml.so", Path: "/usr/lib64/librbln-ml.so", ContainerPath: "/usr/lib64/librbln-ml.so", Type: discover.LibraryTypeRBLN},
+		},
+		Tools: []discover.Tool{
+			{Name: "rbln-smi", Path: "/usr/bin/rbln-smi", ContainerPath: "/usr/bin/rbln-smi"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Devices.Disabled = true
+	gen := NewGenerator(cfg, nil)
+
+	// When
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+
+	// Then: spec-level common block is emptied after the fold, and each
+	// device entry carries the mounts/hooks that used to live there.
+	assert.True(t, isContainerEditsEmpty(&spec.ContainerEdits),
+		"spec-level ContainerEdits must be empty after folding into the all/runtime entries (avoids double-applying when CDI runtime merges)")
+	for _, name := range []string{"all", "runtime"} {
+		dev := findDevice(t, spec, name)
+		assert.NotEmpty(t, dev.ContainerEdits.Mounts,
+			"%q must carry the folded library/tool mounts", name)
+		assert.NotEmpty(t, dev.ContainerEdits.Hooks,
+			"%q must carry the folded ldcache/symlink hooks", name)
+	}
 }
 
 // TestGenerator_Generate_RuntimeAliasMirrorsAll guards the v0.1.x compat
