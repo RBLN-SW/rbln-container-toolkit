@@ -25,11 +25,12 @@
     detection stays sufficient.
 - **Per-device NPU selection** (DOLIN-1219): the generated CDI spec now exposes
   one entry per discovered NPU (`rebellions.ai/npu=0`, `=1`, ...), one entry
-  per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry that
-  replaces the legacy `=runtime` handle. Containers can opt in to a subset of
-  the host's NPUs via `docker run --device rebellions.ai/npu=0
-  --device rebellions.ai/npu=1`. Multi-entry selection composes additively
-  through CDI's standard merge rules.
+  per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry.
+  `=runtime` is kept as a compatibility alias of `=all` with identical content
+  so v0.1.x manifests and device-plugin builds keep matching the spec.
+  Containers can opt in to a subset of the host's NPUs via
+  `docker run --device rebellions.ai/npu=0 --device rebellions.ai/npu=1`.
+  Multi-entry selection composes additively through CDI's standard merge rules.
 - Library mounts, tool mounts, and ldcache/symlink hooks moved to the
   top-level `containerEdits` block so they apply to any `npu=*` selection
   without being duplicated per entry. Per-NPU entries carry their own
@@ -77,16 +78,19 @@
     `make build-rblnml-ci`, which builds the in-tree stub first) opt
     into the cgo path; the release pipeline uses `build-rblnml-ci` so
     shipped DEB/RPM binaries carry the librbln-ml NEEDED entry.
-- **Breaking**: `rebellions.ai/npu=runtime` is gone. Existing manifests must
-  switch to `rebellions.ai/npu=all` (same behavior) or a per-device selector.
+- `rebellions.ai/npu=runtime` keeps working as a v0.1.x compatibility alias
+  of `=all` (same content, no manifest rewrite required). Prefer `=all` or a
+  per-device selector for new manifests; the alias may be retired in a future
+  release once downstream consumers have all migrated.
 
-  Migration cheat sheet:
+  Selector cheat sheet:
 
-  | Before (v0.1.x) | After (v0.2.0) |
+  | Selector | Effect |
   |---|---|
-  | `--device rebellions.ai/npu=runtime` | `--device rebellions.ai/npu=all` |
-  | (n/a — was always all-or-nothing) | `--device rebellions.ai/npu=0 --device rebellions.ai/npu=1` |
-  | (n/a) | `--device rebellions.ai/npu=rsd2` (custom RSD group) |
+  | `--device rebellions.ai/npu=all` | All discovered NPUs + their RSD groups (recommended) |
+  | `--device rebellions.ai/npu=runtime` | Same as `=all` — v0.1.x compatibility alias |
+  | `--device rebellions.ai/npu=0 --device rebellions.ai/npu=1` | Two specific NPUs |
+  | `--device rebellions.ai/npu=rsd2` | Explicit RSD group (custom topology) |
 
 ## v0.1.2
 

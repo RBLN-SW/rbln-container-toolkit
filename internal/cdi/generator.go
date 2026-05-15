@@ -62,8 +62,14 @@ func NewGenerator(cfg *config.Config, resolver topology.RsdResolver) Generator {
 }
 
 // AllDeviceName is the CDI device entry that selects every discovered device.
-// Replaces the previous "runtime" entry from CTK v0.1.x.
+// `LegacyRuntimeDeviceName` is emitted alongside as a v0.1.x compatibility
+// alias with identical content.
 const AllDeviceName = "all"
+
+// LegacyRuntimeDeviceName is the v0.1.x entry name kept as an alias of `all`
+// so existing manifests / downstream device-plugin builds that still request
+// `rebellions.ai/npu=runtime` keep matching the spec. Same content as `all`.
+const LegacyRuntimeDeviceName = "runtime"
 
 // rsdEntryPrefix is the entry-name prefix for explicit RSD group selection
 // (e.g., "rsd0", "rsd1"). Per-NPU entries use the bare numeric index ("0", "1").
@@ -81,8 +87,9 @@ const rsdEntryPrefix = "rsd"
 //   - per-RSD entries named "rsd0", "rsd1", ... for explicit group selection
 //     (kept for debugging / custom-group workflows where the user wants to
 //     bypass the auto-mapping).
-//   - "all" entry: every discovered NPU + RSD node, replacing the legacy
-//     "runtime" entry.
+//   - "all" entry: every discovered NPU + RSD node.
+//   - "runtime" entry: v0.1.x compatibility alias of "all" (identical content)
+//     so existing manifests using `rebellions.ai/npu=runtime` keep matching.
 //
 // When config.Devices.Disabled is true (Kubernetes path) device discovery is
 // suppressed by the caller and we emit only the "all" entry with no device
@@ -187,9 +194,10 @@ func (g *generator) classifyDevices(result *discover.DiscoveryResult) (rbln, rsd
 func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []specs.Device {
 	rsdByIndex := indexRSDDevices(rsdDevs)
 	// Pre-size for the worst case: every NPU + every RSD + the trailing
-	// `all` umbrella entry. Saves a few growslice rounds on hosts with
-	// dense NPU populations and silences golangci-lint's prealloc check.
-	devices := make([]specs.Device, 0, len(rblnDevs)+len(rsdDevs)+1)
+	// `all` umbrella entry and its `runtime` compat alias. Saves a few
+	// growslice rounds on hosts with dense NPU populations and silences
+	// golangci-lint's prealloc check.
+	devices := make([]specs.Device, 0, len(rblnDevs)+len(rsdDevs)+2)
 
 	for _, dev := range rblnDevs {
 		npuNode := g.createDeviceNode(dev)
@@ -227,6 +235,13 @@ func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []sp
 	}
 	devices = append(devices, specs.Device{
 		Name:           AllDeviceName,
+		ContainerEdits: allEdits,
+	})
+	// v0.1.x compatibility alias: identical content to `all`. Required so
+	// containers / device-plugin builds that still pin `npu=runtime` (the
+	// pre-DOLIN-1219 name) keep matching the spec without a manifest rewrite.
+	devices = append(devices, specs.Device{
+		Name:           LegacyRuntimeDeviceName,
 		ContainerEdits: allEdits,
 	})
 

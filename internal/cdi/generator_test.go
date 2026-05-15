@@ -68,7 +68,7 @@ func TestGenerator_Generate_WithLibraries(t *testing.T) {
 	// Then
 	require.NoError(t, err)
 	require.NotEmpty(t, spec.Devices)
-	assertDeviceNames(t, spec, "all")
+	assertDeviceNames(t, spec, "all", "runtime")
 	assert.GreaterOrEqual(t, len(spec.ContainerEdits.Mounts), 2)
 	for _, mount := range spec.ContainerEdits.Mounts {
 		assert.Contains(t, mount.Options, "ro")
@@ -1250,18 +1250,23 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "options: [ro,", "Mount options should be in flow style (inline array)")
 
-	// 2. Verify devices exist — with no NPUs discovered we still emit a single
-	// "all" entry as the named handle for libs/tools injection.
+	// 2. Verify devices exist — with no NPUs discovered we still emit the
+	// `all` named handle plus its v0.1.x `runtime` compat alias (same content).
 	devicesRaw, ok := parsed["devices"]
 	require.True(t, ok, "devices field should exist")
 	devices, ok := devicesRaw.([]interface{})
 	require.True(t, ok, "devices should be a list")
-	require.Len(t, devices, 1, "no NPU discovery → only the `all` entry should remain")
+	require.Len(t, devices, 2, "no NPU discovery → only `all` + `runtime` alias remain")
 
-	// 3. Verify the named handle is "all" (replaces v0.1.x "runtime")
-	device, ok := devices[0].(map[string]interface{})
-	require.True(t, ok, "device should be a map")
-	assert.Equal(t, "all", device["name"], "named handle should be 'all'")
+	// 3. Verify the named handles are "all" and its "runtime" alias.
+	deviceNames := make([]string, 0, len(devices))
+	for _, d := range devices {
+		m, ok := d.(map[string]interface{})
+		require.True(t, ok, "device should be a map")
+		deviceNames = append(deviceNames, m["name"].(string))
+	}
+	assert.ElementsMatch(t, []string{"all", "runtime"}, deviceNames,
+		"named handles should be 'all' and the v0.1.x 'runtime' alias")
 
 	// 4. Verify top-level containerEdits (libs/tools/hooks/env now live there)
 	editsRaw, ok := parsed["containerEdits"]
@@ -1371,9 +1376,9 @@ func TestGenerator_Generate_WithDevices_PerNPUEntries(t *testing.T) {
 	// When
 	spec, err := gen.Generate(result)
 
-	// Then: per-NPU "0"/"1", per-RSD "rsd0", and "all" entries all exist.
+	// Then: per-NPU "0"/"1", per-RSD "rsd0", "all", and the "runtime" alias.
 	require.NoError(t, err)
-	assertDeviceNames(t, spec, "0", "1", "rsd0", "all")
+	assertDeviceNames(t, spec, "0", "1", "rsd0", "all", "runtime")
 
 	// Per-NPU entries carry exactly their own rbln node.
 	npu0 := findDevice(t, spec, "0")
@@ -1390,9 +1395,12 @@ func TestGenerator_Generate_WithDevices_PerNPUEntries(t *testing.T) {
 	require.Len(t, rsd0.ContainerEdits.DeviceNodes, 1)
 	assert.Equal(t, "/dev/rsd0", rsd0.ContainerEdits.DeviceNodes[0].Path)
 
-	// "all" entry mirrors the full device set.
+	// "all" entry mirrors the full device set, and the "runtime" alias
+	// carries the same nodes for v0.1.x consumers.
 	all := findDevice(t, spec, "all")
 	require.Len(t, all.ContainerEdits.DeviceNodes, 3)
+	runtime := findDevice(t, spec, "runtime")
+	require.Len(t, runtime.ContainerEdits.DeviceNodes, 3)
 }
 
 func TestGenerator_Generate_ResolverAttachesRSDPerNPU(t *testing.T) {
@@ -1550,6 +1558,7 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 	assert.Contains(t, output, "permissions: rw")
 	assert.Contains(t, output, "name: \"0\"")
 	assert.Contains(t, output, "name: all")
+	assert.Contains(t, output, "name: runtime")
 }
 
 func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
@@ -1569,16 +1578,70 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 	// When
 	spec, err := gen.Generate(result)
 
-	// Then: only the "all" library/tool handle survives; no device nodes
-	// anywhere — neither top-level (default RSD suppressed) nor per-device
-	// (no per-NPU/per-RSD entries emitted at all).
+	// Then: only the "all" library/tool handle (and its "runtime" alias)
+	// survive; no device nodes anywhere — neither top-level (default RSD
+	// suppressed) nor per-device (no per-NPU/per-RSD entries emitted at all).
 	require.NoError(t, err)
-	assertDeviceNames(t, spec, "all")
+	assertDeviceNames(t, spec, "all", "runtime")
 	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
 		"Devices.Disabled must suppress the default RSD in top-level edits")
 	all := findDevice(t, spec, "all")
 	assert.Empty(t, all.ContainerEdits.DeviceNodes,
 		"Devices.Disabled must keep the `all` entry free of device nodes")
+	runtime := findDevice(t, spec, "runtime")
+	assert.Empty(t, runtime.ContainerEdits.DeviceNodes,
+		"Devices.Disabled must keep the `runtime` alias free of device nodes")
+}
+
+// TestGenerator_Generate_RuntimeAliasMirrorsAll guards the v0.1.x compat
+// contract end-to-end: whatever ContainerEdits the `all` entry carries, the
+// `runtime` alias must carry the exact same content so downstream consumers
+// pinning `rebellions.ai/npu=runtime` behave identically to `=all`. Covers
+// both the populated (Docker) and empty (K8s / Devices.Disabled) cases.
+func TestGenerator_Generate_RuntimeAliasMirrorsAll(t *testing.T) {
+	cases := []struct {
+		name           string
+		devicesDisabled bool
+		devices        []discover.Device
+	}{
+		{
+			name: "docker_path_populated",
+			devices: []discover.Device{
+				{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+				{Path: "/dev/rbln1", ContainerPath: "/dev/rbln1"},
+				{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+			},
+		},
+		{
+			name:            "k8s_path_devices_disabled",
+			devicesDisabled: true,
+			devices: []discover.Device{
+				{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+				{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := &discover.DiscoveryResult{
+				Libraries: []discover.Library{
+					{Name: "librbln-ml.so", Path: "/usr/lib64/librbln-ml.so", ContainerPath: "/usr/lib64/librbln-ml.so", Type: discover.LibraryTypeRBLN},
+				},
+				Devices: tc.devices,
+			}
+			cfg := config.DefaultConfig()
+			cfg.Devices.Disabled = tc.devicesDisabled
+			gen := NewGenerator(cfg, nil)
+
+			spec, err := gen.Generate(result)
+			require.NoError(t, err)
+
+			all := findDevice(t, spec, "all")
+			runtime := findDevice(t, spec, "runtime")
+			assert.Equal(t, all.ContainerEdits, runtime.ContainerEdits,
+				"`runtime` alias must mirror `all`'s ContainerEdits exactly")
+		})
+	}
 }
 
 // findDevice returns the CDI device entry with the given name or fails the test.
