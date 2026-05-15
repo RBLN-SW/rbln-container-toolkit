@@ -256,13 +256,24 @@ func TestRootCmdFlagShortcuts(t *testing.T) {
 	}
 }
 
+// noopRestarterFactory is the doCleanup factory tests inject so the cleanup
+// path never reaches the real systemd/socket restarter. Without this the
+// production factory would burn ~10s per subtest in retry/timeout against
+// sockets that don't exist on CI runners (TestDoCleanup alone used to take
+// over two minutes).
+func noopRestarterFactory(_ restart.Options) (restart.Restarter, error) {
+	return &restart.RestarterMock{
+		RestartFunc: func(_ string) error { return nil },
+	}, nil
+}
+
 func TestDoCleanup(t *testing.T) {
 	t.Run("returns no error with non-existent CDI spec", func(t *testing.T) {
 		// Given
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -276,7 +287,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -289,7 +300,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -303,11 +314,11 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 		assert.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -325,7 +336,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -345,7 +356,7 @@ func TestDoCleanup(t *testing.T) {
 		defer os.Chmod(tmpDir, 0755)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -364,7 +375,7 @@ func TestDoCleanup(t *testing.T) {
 				require.NoError(t, err)
 
 				// When
-				err = doCleanup(rt, tmpDir, "/", "")
+				err = doCleanup(rt, tmpDir, "/", "", noopRestarterFactory)
 
 				// Then
 				assert.NoError(t, err)
@@ -382,7 +393,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -397,7 +408,7 @@ func TestDoCleanup(t *testing.T) {
 		defer os.Chmod(backupPath, 0644)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -408,7 +419,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -426,7 +437,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "")
+		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
 
 		// Then
 		assert.NoError(t, err)
@@ -532,6 +543,7 @@ func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
 			cdiDir,
 			"/",
 			configFile,
+			noopRestarterFactory,
 		)
 
 		// Then: backup should be restored
@@ -569,6 +581,7 @@ func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
 			cdiDir,
 			hostRoot,
 			overridePath,
+			noopRestarterFactory,
 		)
 
 		// Then: backup at the override path (no hostRoot prefix) is restored
@@ -598,6 +611,7 @@ func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
 			cdiDir,
 			hostRoot,
 			"",
+			noopRestarterFactory,
 		)
 
 		// Then: backup at hostRoot + default path should be restored

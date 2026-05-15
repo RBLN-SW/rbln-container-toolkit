@@ -189,7 +189,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	}
 
 	cleanup := func() error {
-		return doCleanup(rt, cdiDir, hostRoot, configPath)
+		return doCleanup(rt, cdiDir, hostRoot, configPath, restart.NewRestarter)
 	}
 
 	d := daemon.NewDaemon(cfg, cleanup)
@@ -437,7 +437,13 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 	return nil
 }
 
-func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string) error {
+// restarterFactory builds a Restarter from Options. Injected into doCleanup
+// so tests can substitute a mock that returns immediately instead of letting
+// the real systemd/socket restarter chew through retry/timeout windows
+// (~10s per call) against sockets that don't exist on CI runners.
+type restarterFactory func(restart.Options) (restart.Restarter, error)
+
+func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string, newRestarter restarterFactory) error {
 	log.Println("INFO: Removing CDI specification...")
 
 	// Remove CDI spec
@@ -478,10 +484,10 @@ func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string) erro
 		Socket:        socketPath,
 		HostRootMount: hostRoot,
 		MaxRetries:    3,
-		RetryBackoff:  5 * 1e9, // 5 seconds in nanoseconds
-		Timeout:       30 * 1e9,
+		RetryBackoff:  5 * time.Second,
+		Timeout:       30 * time.Second,
 	}
-	restarter, err := restart.NewRestarter(restartOpts)
+	restarter, err := newRestarter(restartOpts)
 	if err != nil {
 		log.Printf("WARNING: Could not create restarter: %v", err)
 		return nil
