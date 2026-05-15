@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Auto-regenerate CDI spec on UMD driver upgrades** (DOLIN-1800): the
+- **Auto-regenerate CDI spec on UMD driver upgrades**: the
   daemon now polls embedded `rbln version:` strings inside `librbln-*.so`
   and rewrites `/var/run/cdi/rbln.yaml` whenever it sees a change. Picks up
   driver re-install / upgrade transparently so newly started containers
@@ -23,7 +23,7 @@
     `probe failed` warning on every tick without contributing any signal;
     both libraries flip versions in lockstep on driver upgrade so change
     detection stays sufficient.
-- **Per-device NPU selection** (DOLIN-1219): the generated CDI spec now exposes
+- **Per-device NPU selection**: the generated CDI spec now exposes
   one entry per discovered NPU (`rebellions.ai/npu=0`, `=1`, ...), one entry
   per RSD group (`=rsd0`, `=rsd1`, ...), and an `=all` umbrella entry.
   `=runtime` is kept as a compatibility alias of `=all` with identical content
@@ -59,8 +59,8 @@
   default) fall through to `NoopResolver{}` with an operator-visible warning
   via `topology.LoadOrFallback`. Production builds for hosts with the
   Rebellions driver should use `go build -tags with_rblnml` and link against
-  `librbln-ml`; the Phase-3 follow-up will flip the default build to use
-  cgo + the tag once the CI/packaging story is settled.
+  `librbln-ml`; a follow-up will flip the default build to use cgo + the
+  tag once the CI/packaging story is settled.
 - Build infrastructure & distribution split:
   - **Docker image** (`deployments/container/Dockerfile`) stays pure-Go
     (`CGO_ENABLED=0`). It targets Kubernetes DaemonSet deployments where
