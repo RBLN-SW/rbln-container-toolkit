@@ -105,7 +105,55 @@ func (g *generator) Generate(result *discover.DiscoveryResult) (*specs.Spec, err
 	rblnDevs, rsdDevs := g.classifyDevices(result)
 	spec.Devices = g.buildDeviceEntries(rblnDevs, rsdDevs)
 
+	// CDI parsers (Docker 27, containerd 1.7+) reject any device whose
+	// ContainerEdits is empty with `invalid device, empty device edits`,
+	// which marks the whole spec unresolvable. The K8s path (Devices.Disabled
+	// =true) emits `all`/`runtime` with no device nodes and relies on the
+	// spec-level ContainerEdits, so those entries surface as `containerEdits:
+	// {}` after YAML marshaling and trip the check. Fold the spec-level
+	// edits into any empty device entry and clear the spec-level block —
+	// semantically equivalent (a device selection still carries the same
+	// edits) and schema-valid across CDI parser versions. Scoped to the K8s
+	// path: the Docker path always carries device nodes in the `all` entry,
+	// so the fold would be a no-op there.
+	if g.cfg.Devices.Disabled {
+		foldCommonEditsIntoEmptyDevices(spec)
+	}
+
 	return spec, nil
+}
+
+// foldCommonEditsIntoEmptyDevices copies spec.ContainerEdits into any device
+// entry that would otherwise marshal to `containerEdits: {}` and clears the
+// spec-level block once at least one fold happened. No-op when every device
+// already carries its own non-empty edits (Docker path).
+func foldCommonEditsIntoEmptyDevices(spec *specs.Spec) {
+	if isContainerEditsEmpty(&spec.ContainerEdits) {
+		return
+	}
+	folded := false
+	for i := range spec.Devices {
+		if isContainerEditsEmpty(&spec.Devices[i].ContainerEdits) {
+			spec.Devices[i].ContainerEdits = spec.ContainerEdits
+			folded = true
+		}
+	}
+	if folded {
+		spec.ContainerEdits = specs.ContainerEdits{}
+	}
+}
+
+// isContainerEditsEmpty reports whether a ContainerEdits block has zero
+// content across every field the toolkit may populate. The CDI library's
+// own check uses the same field set; mirroring it locally avoids importing
+// the higher-level cdi package just for one helper.
+func isContainerEditsEmpty(e *specs.ContainerEdits) bool {
+	return len(e.Env) == 0 &&
+		len(e.DeviceNodes) == 0 &&
+		len(e.Hooks) == 0 &&
+		len(e.Mounts) == 0 &&
+		e.IntelRdt == nil &&
+		len(e.AdditionalGIDs) == 0
 }
 
 // buildCommonEdits returns ContainerEdits shared across every device selection:
