@@ -66,17 +66,22 @@ printf 'user = "%s:%s"\n' "${NEXUS_PUBLIC_USERNAME}" "${NEXUS_PUBLIC_PASSWORD}" 
 
 echo "==> Uploading to public Nexus (${NEXUS_BASE})..."
 
-# upload_component POSTs an asset to the Nexus component API and tolerates
-# any 4xx as "already published" so a partial-failure retry of this job is
-# idempotent. Without this, retrying after a half-finished publish (e.g.
-# DEB landed, RPM 400'd) trips Nexus's redeploy block on the asset that
-# already made it through, forcing an admin to either flip
-# "Allow redeploy" on the hosted repo or delete the orphan by hand.
-# 5xx still fails the script — those are server problems we shouldn't
-# silently swallow. Format errors on a fresh release will surface as 4xx
-# on the *first* attempt, with the response body printed here, so the
-# operator still sees them; the assumption is that they'll read the log
-# before re-dispatching.
+# upload_component POSTs an asset to the Nexus component API. A 4xx is only
+# swallowed when the response body matches a known "asset already exists"
+# signal — anything else (format error, auth failure, layout mismatch)
+# stays a hard failure so a real first-time bug can't slip through as a
+# "warning". The prior version swallowed every 4xx and let a depth-layout
+# rejection masquerade as success, with the result that v0.2.0's RPM was
+# silently missing from yum-public for hours.
+#
+# Known-good "already published" signals — extend this list when Nexus
+# adds new wordings or when a different hosted repo type uses different
+# phrasing:
+#   * "Repository does not allow updating assets"   (current Nexus 3 default)
+#   * "asset already exists"                         (older Nexus 3)
+#   * "is already in use"                            (yum/apt component API)
+ALREADY_PUBLISHED_REGEX='Repository does not allow updating assets|asset already exists|is already in use'
+
 upload_component() {
     local desc="$1" repo="$2"
     shift 2
@@ -92,9 +97,14 @@ upload_component() {
             echo "  ${desc}: OK (HTTP ${status})"
             ;;
         4*)
-            echo "  ${desc}: WARNING — HTTP ${status} (treating as already-published; response body follows)"
-            cat "${body}"
-            echo
+            if grep -qE "${ALREADY_PUBLISHED_REGEX}" "${body}"; then
+                echo "  ${desc}: already published (HTTP ${status}) — skipping idempotently"
+            else
+                echo "  ${desc}: ERROR — HTTP ${status} (unrecognized 4xx, response body follows)" >&2
+                cat "${body}" >&2
+                rm -f "${body}"
+                return 1
+            fi
             ;;
         *)
             echo "  ${desc}: ERROR — HTTP ${status}" >&2
@@ -112,15 +122,22 @@ for pkg in dist/*.deb; do
         -F "apt.asset=@${pkg}"
 done
 
-# RPM uses the same component API path as DEB. The previous flat-path PUT
-# (`/repository/yum-public/<basename>`) tripped Nexus's yum hosted-repo
-# layout check with HTTP 400; the component API has Nexus derive the
-# in-repo path from `yum.asset.filename` regardless of repodata-depth.
+# yum-public is a Nexus hosted yum repo configured with `repodata-depth=3`,
+# which rejects uploads whose in-repo path has fewer than three segments.
+# Adopt a `stable/<arch>/Packages/<basename>` layout — mirrors the channel
+# split used by the internal yum repo (testing/stable) so consumers register
+# `baseurl=<NEXUS_BASE>/repository/yum-public/stable/<arch>/Packages/`.
+# The arch is read off the nfpm-produced filename suffix so a future arm64
+# build will land under `stable/aarch64/Packages/` without script changes.
 for pkg in dist/*.rpm; do
     [ -f "${pkg}" ] || continue
-    upload_component "$(basename "${pkg}") → yum-public" "yum-public" \
+    pkg_base="$(basename "${pkg}")"
+    pkg_arch="${pkg_base##*.}"            # rbln-...-1.x86_64.rpm → rpm
+    pkg_arch="${pkg_base%.${pkg_arch}}"   # rbln-...-1.x86_64
+    pkg_arch="${pkg_arch##*.}"            # x86_64
+    upload_component "${pkg_base} → yum-public" "yum-public" \
         -F "yum.asset=@${pkg}" \
-        -F "yum.asset.filename=$(basename "${pkg}")"
+        -F "yum.asset.filename=stable/${pkg_arch}/Packages/${pkg_base}"
 done
 
 echo "==> Public Nexus push complete"
