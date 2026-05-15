@@ -205,6 +205,7 @@ Each generated spec exposes one CDI entry per NPU plus a few group handles:
 | `rebellions.ai/npu=N` | `/dev/rblnN` plus the RSD group device (`/dev/rsdM`) the NPU is assigned to. Auto-attachment requires the `with_rblnml` build (links against `librbln-ml`); the default pure-Go build leaves the entry NPU-only and logs a warning at spec generation so operators can add `--device rebellions.ai/npu=rsdM` explicitly or rebuild with the tag. |
 | `rebellions.ai/npu=rsdM` | `/dev/rsdM` — for explicit group selection (custom-group setups, debugging, or as a workaround in the pure-Go build). |
 | `rebellions.ai/npu=all` | Every discovered `/dev/rbln*` and `/dev/rsd*`. Use this when you want to expose the whole host. |
+| `rebellions.ai/npu=runtime` | v0.1.x compatibility alias of `=all` (identical content). Prefer `=all` for new manifests. |
 
 ```bash
 # Docker — single NPU
@@ -214,7 +215,7 @@ docker run --device rebellions.ai/npu=0 -it ubuntu:22.04
 docker run --device rebellions.ai/npu=0 --device rebellions.ai/npu=1 \
   -it ubuntu:22.04
 
-# Docker — all NPUs (replaces v0.1.x `npu=runtime`)
+# Docker — all NPUs (`npu=runtime` still works as a v0.1.x compat alias)
 docker run --device rebellions.ai/npu=all -it ubuntu:22.04
 ```
 
