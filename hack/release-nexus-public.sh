@@ -66,26 +66,61 @@ printf 'user = "%s:%s"\n' "${NEXUS_PUBLIC_USERNAME}" "${NEXUS_PUBLIC_PASSWORD}" 
 
 echo "==> Uploading to public Nexus (${NEXUS_BASE})..."
 
+# upload_component POSTs an asset to the Nexus component API and tolerates
+# any 4xx as "already published" so a partial-failure retry of this job is
+# idempotent. Without this, retrying after a half-finished publish (e.g.
+# DEB landed, RPM 400'd) trips Nexus's redeploy block on the asset that
+# already made it through, forcing an admin to either flip
+# "Allow redeploy" on the hosted repo or delete the orphan by hand.
+# 5xx still fails the script — those are server problems we shouldn't
+# silently swallow. Format errors on a fresh release will surface as 4xx
+# on the *first* attempt, with the response body printed here, so the
+# operator still sees them; the assumption is that they'll read the log
+# before re-dispatching.
+upload_component() {
+    local desc="$1" repo="$2"
+    shift 2
+    local body status
+    body="$(mktemp)"
+    status="$(curl --silent --show-error \
+        --config "${CURL_CFG}" \
+        "$@" \
+        -o "${body}" -w "%{http_code}" \
+        "${NEXUS_BASE}/service/rest/v1/components?repository=${repo}")"
+    case "${status}" in
+        2*)
+            echo "  ${desc}: OK (HTTP ${status})"
+            ;;
+        4*)
+            echo "  ${desc}: WARNING — HTTP ${status} (treating as already-published; response body follows)"
+            cat "${body}"
+            echo
+            ;;
+        *)
+            echo "  ${desc}: ERROR — HTTP ${status}" >&2
+            cat "${body}" >&2
+            rm -f "${body}"
+            return 1
+            ;;
+    esac
+    rm -f "${body}"
+}
+
 for pkg in dist/*.deb; do
     [ -f "${pkg}" ] || continue
-    echo "  Uploading $(basename "${pkg}") to apt-public..."
-    curl --fail --silent --show-error \
-        --config "${CURL_CFG}" \
-        -F "apt.asset=@${pkg}" \
-        "${NEXUS_BASE}/service/rest/v1/components?repository=apt-public"
+    upload_component "$(basename "${pkg}") → apt-public" "apt-public" \
+        -F "apt.asset=@${pkg}"
 done
 
-# Note on URL shape vs release-package.sh: the internal yum repo uploads to
-# `/yum-internal/<distribution>/<basename>` (testing vs stable) because RC
-# and final builds share one repo. Public Nexus is stable-only (RC was
-# skipped above), so the layout collapses to a flat `/yum-public/<basename>`.
+# RPM uses the same component API path as DEB. The previous flat-path PUT
+# (`/repository/yum-public/<basename>`) tripped Nexus's yum hosted-repo
+# layout check with HTTP 400; the component API has Nexus derive the
+# in-repo path from `yum.asset.filename` regardless of repodata-depth.
 for pkg in dist/*.rpm; do
     [ -f "${pkg}" ] || continue
-    echo "  Uploading $(basename "${pkg}") to yum-public..."
-    curl --fail --silent --show-error \
-        --config "${CURL_CFG}" \
-        --upload-file "${pkg}" \
-        "${NEXUS_BASE}/repository/yum-public/$(basename "${pkg}")"
+    upload_component "$(basename "${pkg}") → yum-public" "yum-public" \
+        -F "yum.asset=@${pkg}" \
+        -F "yum.asset.filename=$(basename "${pkg}")"
 done
 
 echo "==> Public Nexus push complete"
