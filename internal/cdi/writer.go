@@ -48,14 +48,18 @@ type yamlDeviceNode struct {
 	Permissions string `yaml:"permissions,omitempty"`
 }
 
-// yamlContainerEdits is a wrapper for specs.ContainerEdits with proper yaml omitempty tags.
+// yamlContainerEdits is a wrapper for specs.ContainerEdits with proper yaml
+// omitempty tags. Only the fields the toolkit actually populates are wired
+// here — `IntelRdt` (Intel RDT cache/MB partitioning, unrelated to RBLN NPUs)
+// and `AdditionalGIDs` are intentionally omitted. Mirroring those nil-pointer
+// fields through `any` caused `intelRdt: null` to leak into the rendered spec
+// because typed-nil bypasses yaml.v3's `omitempty`, and at least one strict
+// containerd CDI parser version rejects the resulting spec as unresolvable.
 type yamlContainerEdits struct {
-	Env            []string          `yaml:"env,omitempty"`
-	DeviceNodes    []*yamlDeviceNode `yaml:"deviceNodes,omitempty"`
-	Hooks          []any             `yaml:"hooks,omitempty"`
-	Mounts         []*yamlMount      `yaml:"mounts,omitempty"`
-	IntelRdt       any               `yaml:"intelRdt,omitempty"`
-	AdditionalGIDs []uint32          `yaml:"additionalGids,omitempty"`
+	Env         []string          `yaml:"env,omitempty"`
+	DeviceNodes []*yamlDeviceNode `yaml:"deviceNodes,omitempty"`
+	Hooks       []any             `yaml:"hooks,omitempty"`
+	Mounts      []*yamlMount      `yaml:"mounts,omitempty"`
 }
 
 // yamlDevice is a wrapper for specs.Device with proper yaml omitempty tags.
@@ -99,19 +103,16 @@ func toYAMLSpec(spec *specs.Spec) yamlSpec {
 // wrapper so empty fields are elided in the rendered spec. Used for both
 // top-level (spec.ContainerEdits) and per-device blocks.
 //
-// The wrapper carries every field of specs.ContainerEdits (Env, Mounts,
-// DeviceNodes, Hooks, IntelRdt, AdditionalGIDs); copy each one so callers
-// can rely on the YAML output round-tripping the input without silent
-// loss — the toolkit doesn't populate IntelRdt / AdditionalGIDs today, but
-// downstream consumers may wire them in and the writer mustn't drop them.
+// Only Env / Mounts / Hooks / DeviceNodes are mirrored — the toolkit doesn't
+// emit IntelRdt or AdditionalGIDs anywhere, and copying nil-pointer fields
+// through an `any`-typed wrapper field made `intelRdt: null` leak into every
+// rendered spec, which a strict containerd CDI parser rejected.
 func toYAMLContainerEdits(edits *specs.ContainerEdits) yamlContainerEdits {
 	if edits == nil {
 		return yamlContainerEdits{}
 	}
 	out := yamlContainerEdits{
-		Env:            edits.Env,
-		IntelRdt:       edits.IntelRdt,
-		AdditionalGIDs: edits.AdditionalGIDs,
+		Env: edits.Env,
 	}
 
 	for _, dn := range edits.DeviceNodes {
