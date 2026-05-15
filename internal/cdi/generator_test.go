@@ -1559,6 +1559,14 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 	assert.Contains(t, output, "name: \"0\"")
 	assert.Contains(t, output, "name: all")
 	assert.Contains(t, output, "name: runtime")
+	// CDI fields the toolkit does not populate must never leak into the
+	// rendered spec — at least one strict containerd CDI parser rejected
+	// `intelRdt: null` from a typed-nil pointer, masking the spec as
+	// unresolvable in Kubernetes. See toYAMLContainerEdits.
+	assert.NotContains(t, output, "intelRdt:",
+		"unused IntelRdt must not be rendered (typed-nil leak regression guard)")
+	assert.NotContains(t, output, "additionalGids:",
+		"unused AdditionalGIDs must not be rendered")
 }
 
 func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
@@ -1591,6 +1599,19 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 	runtime := findDevice(t, spec, "runtime")
 	assert.Empty(t, runtime.ContainerEdits.DeviceNodes,
 		"Devices.Disabled must keep the `runtime` alias free of device nodes")
+
+	// Rendered YAML must not leak `intelRdt:` / `additionalGids:` keys — the
+	// K8s path emits otherwise-empty `all`/`runtime` containerEdits blocks
+	// where a typed-nil leak surfaces immediately and broke pod admission
+	// via containerd's CDI parser. Regression guard.
+	writer := NewWriter()
+	var buf bytes.Buffer
+	require.NoError(t, writer.WriteToWriter(spec, &buf, "yaml"))
+	output := buf.String()
+	assert.NotContains(t, output, "intelRdt:",
+		"unused IntelRdt must not be rendered (typed-nil leak regression guard)")
+	assert.NotContains(t, output, "additionalGids:",
+		"unused AdditionalGIDs must not be rendered")
 }
 
 // TestGenerator_Generate_RuntimeAliasMirrorsAll guards the v0.1.x compat
@@ -1600,9 +1621,9 @@ func TestGenerator_Generate_DevicesDisabled_OmitsDeviceNodes(t *testing.T) {
 // both the populated (Docker) and empty (K8s / Devices.Disabled) cases.
 func TestGenerator_Generate_RuntimeAliasMirrorsAll(t *testing.T) {
 	cases := []struct {
-		name           string
+		name            string
 		devicesDisabled bool
-		devices        []discover.Device
+		devices         []discover.Device
 	}{
 		{
 			name: "docker_path_populated",
