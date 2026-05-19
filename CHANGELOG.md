@@ -14,6 +14,15 @@
   who already installed 0.2.0 can either upgrade to 0.2.1 or work around it
   on the host with `sudo ln -sf librbln-ml.so /usr/lib64/librbln-ml.so.1 &&
   sudo ldconfig` (substitute `/usr/lib` on Ubuntu).
+- **Fix `apt install rbln-container-toolkit` failing with `Depends: librbln-ml
+  but it is not installable` on Ubuntu.** The driver UMD's DEB package follows
+  Debian's `lib<name><soversion>` convention and ships as `librbln-ml3` (paired
+  with `librbln-ccl3` / `librbln-thunk3`), not `librbln-ml`, so apt could not
+  resolve our previous dependency declaration. The DEB now declares
+  `Depends: librbln-ml3`; the RPM continues to require `librbln-ml` because
+  RHEL's UMD package keeps the unversioned name. Users on driver-equipped
+  Ubuntu hosts no longer need the `dpkg -i --ignore-depends=librbln-ml`
+  workaround to install the toolkit.
 
 ## v0.2.0
 

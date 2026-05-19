@@ -71,11 +71,20 @@ scripts:
 # distros. The K8s-focused Docker image builds without cgo and ships with no
 # librbln-ml dependency; the two distribution flavors are intentionally
 # asymmetric (see deployments/container/Dockerfile for the K8s rationale).
+#
+# Driver package naming differs between distros:
+#   - DEB (Ubuntu): `librbln-ml3` — Debian convention `lib<name><soversion>`,
+#     versioned alongside `librbln-ccl3` / `librbln-thunk3`.
+#   - RPM (RHEL):   `librbln-ml`  — RHEL ships shared-lib packages without
+#     the numeric suffix; the version lives in NEVRA instead.
+# Keeping the two overrides in sync with the driver's actual package names
+# is what lets `apt install` / `dnf install` resolve the dependency cleanly
+# on hosts where the driver is already present.
 overrides:
   deb:
     depends:
       - libc6
-      - librbln-ml
+      - librbln-ml3
   rpm:
     depends:
       - glibc
