@@ -5,8 +5,16 @@
 #   ./hack/ci/build-librbln-ml-stub.sh [OUT_DIR]
 #
 # Produces:
-#   OUT_DIR/librbln-ml.so.1     (the stub shared library, soname=librbln-ml.so.1)
-#   OUT_DIR/librbln-ml.so       (symlink so `ld -lrbln-ml` finds it)
+#   OUT_DIR/librbln-ml.so       (the stub shared library, soname=librbln-ml.so)
+#
+# The SONAME is intentionally unversioned to match the Rebellions UMD/driver
+# packaging, which currently ships `/usr/lib(64)/librbln-ml.so` without a
+# `.so.N` variant. Baking the matching SONAME here keeps the resulting
+# binary's DT_NEEDED entry aligned with what end hosts actually expose, so
+# operators don't need to manually create `librbln-ml.so.1` symlinks after
+# `dnf install` / `apt install`. When the driver starts shipping a proper
+# versioned `.so.N`, the driver's `librbln-ml.so` dev symlink will keep this
+# DT_NEEDED resolving — and at that point we can revisit a SONAME bump.
 #
 # Pass the resulting directory to the linker via LIBRARY_PATH (build time)
 # and LD_LIBRARY_PATH (runtime). See hack/ci/librbln-ml-stub/README.md for
@@ -43,17 +51,17 @@ fi
 mkdir -p "${OUT_DIR}"
 
 # -fPIC: position-independent code, required for shared libs
-# -Wl,-soname,librbln-ml.so.1: bakes the soname into the .so so the linker
-#                              writes that exact NEEDED entry into consumers
+# -Wl,-soname,librbln-ml.so: bakes the soname into the .so so the linker
+#                            writes that exact NEEDED entry into consumers.
+#                            Mirrors the unversioned name shipped by the
+#                            current driver UMD package (see header comment).
 # We don't need -Wall -Werror here: the stub is intentionally minimal and
 # any cgo header change will surface as a real compile error anyway.
 gcc -shared -fPIC \
 	-I "${INCLUDE_DIR}" \
-	-Wl,-soname,librbln-ml.so.1 \
-	-o "${OUT_DIR}/librbln-ml.so.1" \
+	-Wl,-soname,librbln-ml.so \
+	-o "${OUT_DIR}/librbln-ml.so" \
 	"${STUB_SRC}"
-
-ln -sf librbln-ml.so.1 "${OUT_DIR}/librbln-ml.so"
 
 cat <<EOF
 stub librbln-ml.so built: ${OUT_DIR}

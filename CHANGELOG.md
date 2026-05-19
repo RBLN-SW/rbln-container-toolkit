@@ -1,5 +1,20 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.1
+
+- **Fix `librbln-ml.so.1: cannot open shared object file` on driver-equipped
+  hosts.** The CI stub library used at link time was emitting
+  `SONAME=librbln-ml.so.1`, which baked an `DT_NEEDED=librbln-ml.so.1` entry
+  into the released `rbln-ctk` / `rbln-ctk-daemon` binaries. The Rebellions
+  UMD driver package ships `/usr/lib(64)/librbln-ml.so` without a versioned
+  `.so.N` variant, so `ld.so` failed to resolve the dependency at startup on
+  both Ubuntu and RHEL hosts running the rblnml-flavored 0.2.0 build. The
+  stub now bakes `SONAME=librbln-ml.so` to mirror the driver's actual on-disk
+  layout, restoring out-of-the-box installs of the DEB/RPM packages. Operators
+  who already installed 0.2.0 can either upgrade to 0.2.1 or work around it
+  on the host with `sudo ln -sf librbln-ml.so /usr/lib64/librbln-ml.so.1 &&
+  sudo ldconfig` (substitute `/usr/lib` on Ubuntu).
+
 ## v0.2.0
 
 - **Auto-regenerate CDI spec on UMD driver upgrades**: the

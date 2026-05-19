@@ -53,7 +53,15 @@ error here.
 
 ```bash
 ./hack/ci/build-librbln-ml-stub.sh /tmp/stub
-# Output: /tmp/stub/librbln-ml.so.1 and a librbln-ml.so symlink
+# Output: /tmp/stub/librbln-ml.so (soname=librbln-ml.so, unversioned)
 
 LIBRARY_PATH=/tmp/stub LD_LIBRARY_PATH=/tmp/stub make build-rblnml
 ```
+
+> The stub's SONAME is intentionally unversioned (`librbln-ml.so`, not
+> `librbln-ml.so.1`) to match what the current Rebellions UMD/driver
+> package installs on host systems. Binaries linked against this stub
+> inherit `DT_NEEDED=librbln-ml.so`, which resolves out of the box on
+> driver-equipped hosts without operators having to create a
+> `librbln-ml.so.1` symlink. See the header comment of
+> `build-librbln-ml-stub.sh` for the longer history.
