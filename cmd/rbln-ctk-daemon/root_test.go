@@ -295,6 +295,25 @@ func TestDoCleanup(t *testing.T) {
 		assert.True(t, os.IsNotExist(err))
 	})
 
+	t.Run("removes existing RDS CDI spec", func(t *testing.T) {
+		// Given both the NPU and RDS specs exist (DOLIN-2324).
+		tmpDir := t.TempDir()
+		specPath := tmpDir + "/rbln.yaml"
+		rdsSpecPath := tmpDir + "/rbln-rds.yaml"
+		require.NoError(t, os.WriteFile(specPath, []byte("test: spec"), 0644))
+		require.NoError(t, os.WriteFile(rdsSpecPath, []byte("test: rds"), 0644))
+
+		// When
+		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+
+		// Then both specs are removed.
+		assert.NoError(t, err)
+		_, err = os.Stat(specPath)
+		assert.True(t, os.IsNotExist(err))
+		_, err = os.Stat(rdsSpecPath)
+		assert.True(t, os.IsNotExist(err))
+	})
+
 	t.Run("handles gracefully with missing backup", func(t *testing.T) {
 		// Given
 		tmpDir := t.TempDir()

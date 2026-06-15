@@ -46,8 +46,12 @@ type Logger interface {
 type Options struct {
 	// Config is the CDI configuration.
 	Config *config.Config
-	// OutputPath is the path where the CDI spec will be written.
+	// OutputPath is the path where the NPU CDI spec will be written.
 	OutputPath string
+	// RDSOutputPath is the path where the RDS CDI spec (rebellions.ai/rds,
+	// /dev/rblnfs*) will be written. Empty disables RDS spec emission to a file
+	// (e.g. stdout/dry-run, where the preview is appended to the writer instead).
+	RDSOutputPath string
 	// Format is the output format (yaml or json).
 	Format string
 	// ErrorMode defines how errors are handled.
@@ -58,8 +62,12 @@ type Options struct {
 	LibraryDiscoverer discover.LibraryDiscoverer
 	// ToolDiscoverer is used for tool discovery (optional, for testing).
 	ToolDiscoverer discover.ToolDiscoverer
-	// DeviceDiscoverer is used for device node discovery (optional, for testing).
+	// DeviceDiscoverer is used for NPU/RSD device node discovery (optional, for testing).
 	DeviceDiscoverer discover.DeviceDiscoverer
+	// RDSDeviceDiscoverer is used for RDS char device discovery (optional, for
+	// testing). When nil, a discoverer is built from Config with the RDS glob
+	// patterns swapped in, independent of Devices.Disabled.
+	RDSDeviceDiscoverer discover.DeviceDiscoverer
 	// RsdResolver maps each NPU to its assigned RSD group. nil falls back to
 	// topology.NoopResolver{} — per-NPU CDI entries then carry only the rbln
 	// node and users must add `--device rebellions.ai/npu=rsdM` explicitly.

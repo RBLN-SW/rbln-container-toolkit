@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/cdi"
+	"github.com/RBLN-SW/rbln-container-toolkit/internal/config"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/restart"
 )
 
@@ -965,4 +967,52 @@ func TestGenerateCDISpec_PermissionError(t *testing.T) {
 
 	// Then - may or may not error depending on OS
 	_ = err
+}
+
+// TestGenerateRDSSpec_WritesSpecWhenDevicePresent verifies the installer path
+// (rbln-ctk-daemon runtime <rt> setup) emits the separate rebellions.ai/rds
+// spec when /dev/rblnfs* is present (DOLIN-2324). A temp dir stands in for the
+// device root so the test doesn't depend on real host devices.
+func TestGenerateRDSSpec_WritesSpecWhenDevicePresent(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "dev"), 0o755))
+	// Regular files stand in for the char device nodes (the discoverer globs +
+	// Lstats; it only skips directories).
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dev", "rblnfs0"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dev", "rblnfs1"), nil, 0o644))
+
+	cdiSpecDir := filepath.Join(t.TempDir(), "cdi")
+
+	cfg := config.DefaultConfig()
+	cfg.DriverRoot = root // device discovery + containerPath stripping rooted here
+	gen := cdi.NewGenerator(cfg, nil)
+
+	require.NoError(t, generateRDSSpec(cfg, cdiSpecDir, gen))
+
+	data, err := os.ReadFile(filepath.Join(cdiSpecDir, "rbln-rds.yaml"))
+	require.NoError(t, err, "installer path must write rbln-rds.yaml when /dev/rblnfs* exists")
+	out := string(data)
+	assert.Contains(t, out, "kind: rebellions.ai/rds")
+	assert.Contains(t, out, "name: rblnfs0")
+	assert.Contains(t, out, "/dev/rblnfs0")
+	assert.Contains(t, out, "/dev/rblnfs1")
+}
+
+// TestGenerateRDSSpec_PrunesStaleWhenNoDevice verifies the installer path
+// removes a stale RDS spec on hosts with no /dev/rblnfs*.
+func TestGenerateRDSSpec_PrunesStaleWhenNoDevice(t *testing.T) {
+	root := t.TempDir() // no dev/rblnfs* under here
+	cdiSpecDir := filepath.Join(t.TempDir(), "cdi")
+	require.NoError(t, os.MkdirAll(cdiSpecDir, 0o755))
+	rdsPath := filepath.Join(cdiSpecDir, "rbln-rds.yaml")
+	require.NoError(t, os.WriteFile(rdsPath, []byte("stale: spec\n"), 0o644))
+
+	cfg := config.DefaultConfig()
+	cfg.DriverRoot = root
+	gen := cdi.NewGenerator(cfg, nil)
+
+	require.NoError(t, generateRDSSpec(cfg, cdiSpecDir, gen))
+
+	_, err := os.Stat(rdsPath)
+	assert.True(t, os.IsNotExist(err), "stale RDS spec must be pruned when no /dev/rblnfs* present")
 }

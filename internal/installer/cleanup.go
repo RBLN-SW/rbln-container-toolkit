@@ -88,7 +88,7 @@ func Cleanup(opts CleanupOptions) error {
 
 	logger.Info("Removing RBLN support from %s...", opts.Runtime)
 
-	// Step 1: Remove CDI spec (idempotent - no error if not found)
+	// Step 1: Remove CDI specs (NPU + RDS; idempotent - no error if not found)
 	cdiSpecPath := filepath.Join(cdiSpecDir, "rbln.yaml")
 	logger.Debug("Removing CDI spec at %s", cdiSpecPath)
 	if err := removeCDISpec(cdiSpecPath); err != nil {
@@ -96,6 +96,13 @@ func Cleanup(opts CleanupOptions) error {
 		logger.Debug("CDI spec removal: %v", err)
 	} else {
 		logger.Info("CDI spec removed")
+	}
+	rdsSpecPath := filepath.Join(cdiSpecDir, "rbln-rds.yaml")
+	logger.Debug("Removing RDS CDI spec at %s", rdsSpecPath)
+	if err := removeCDISpec(rdsSpecPath); err != nil {
+		logger.Debug("RDS CDI spec removal: %v", err)
+	} else {
+		logger.Info("RDS CDI spec removed")
 	}
 
 	// Step 2: Revert runtime configuration
@@ -144,7 +151,7 @@ func dryRunCleanup(opts CleanupOptions, configPath, socketPath, cdiSpecDir strin
 	cdiSpecPath := filepath.Join(cdiSpecDir, "rbln.yaml")
 
 	logger.Info("[DRY-RUN] Would perform the following actions:")
-	logger.Info("  1. Remove CDI spec at %s", cdiSpecPath)
+	logger.Info("  1. Remove CDI specs at %s and %s", cdiSpecPath, filepath.Join(cdiSpecDir, "rbln-rds.yaml"))
 	logger.Info("  2. Revert %s configuration at %s", opts.Runtime, configPath)
 
 	if opts.RestartMode == restart.RestartModeNone {

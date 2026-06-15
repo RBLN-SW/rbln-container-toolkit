@@ -1,5 +1,21 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.2
+
+- **Inject the RDS (Rebellions Datastore) char device `/dev/rblnfsN` via a
+  separate, opt-in CDI class.** A new `rebellions.ai/rds` class — written to its
+  own spec file (`/var/run/cdi/rbln-rds.yaml`) — carries the `/dev/rblnfs*` char
+  device node (with the matching device-cgroup `rw` rule), independent of the
+  NPU class. It is kept out of the NPU `=all` selection and is emitted regardless
+  of the Kubernetes device-node gate (`Devices.Disabled`): because the device is
+  only injected into containers that explicitly reference it, it never masks
+  device-plugin NPU allocations (the v0.1.2 regression that motivated the gate).
+  Use `docker run --device rebellions.ai/rds=all` (or `=rblnfs0`), or the Pod
+  annotation `cdi.k8s.io/rblnfs: rebellions.ai/rds=rblnfs0` on containerd
+  1.7+/CRI-O with CDI enabled. The `rbln-ctk cdi generate` flow and the daemon
+  both emit the RDS spec on RDS-capable hosts and prune a stale spec on hosts
+  with no `/dev/rblnfs*`; a new `--rds-output` flag overrides its path.
+
 ## v0.2.1
 
 - **Fix `librbln-ml.so.1: cannot open shared object file` on driver-equipped

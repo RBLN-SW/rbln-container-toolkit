@@ -10,8 +10,10 @@ if command -v systemctl &> /dev/null; then
     systemctl stop rbln-cdi-refresh.service || true
 fi
 
-# Remove generated CDI specification
+# Remove generated CDI specifications (NPU + RDS)
 rm -f /etc/cdi/rbln.yaml || true
 rm -f /var/run/cdi/rbln.yaml || true
+rm -f /etc/cdi/rbln-rds.yaml || true
+rm -f /var/run/cdi/rbln-rds.yaml || true
 
 echo "RBLN Container Toolkit removed."

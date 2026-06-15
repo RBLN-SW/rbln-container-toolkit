@@ -1743,3 +1743,162 @@ func deviceNames(spec *specs.Spec) []string {
 	}
 	return out
 }
+
+// --- RDS char device (rebellions.ai/rds) -----------------------------------
+
+// TestParseDeviceClass_RBLNFS guards the classifier ordering that makes the RDS
+// class work at all: "rbln" is a prefix of "rblnfs", so the rblnfs check must
+// run first. /dev/rblnfs0 must classify as RBLNFS (not get shadowed by the NPU
+// check and dropped as unknown), while the NPU/RSD nodes keep their classes.
+func TestParseDeviceClass_RBLNFS(t *testing.T) {
+	cases := []struct {
+		path string
+		want deviceClass
+	}{
+		{"/dev/rblnfs0", deviceClassRBLNFS},
+		{"/dev/rblnfs12", deviceClassRBLNFS},
+		{"/dev/rbln0", deviceClassRBLN},
+		{"/dev/rbln3", deviceClassRBLN},
+		{"/dev/rsd0", deviceClassRSD},
+		{"/dev/rblnfsx", deviceClassUnknown}, // non-numeric suffix
+		{"/dev/rblnfs", deviceClassUnknown},  // no index
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			got := parseDeviceClass(discover.Device{ContainerPath: tc.path})
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestDeviceIndex_RBLNFS verifies the index extraction strips "rblnfs" before
+// "rbln", so /dev/rblnfs0 yields "0" (not "fs0") and the entry name becomes
+// "rblnfs0" rather than "rblnfsfs0".
+func TestDeviceIndex_RBLNFS(t *testing.T) {
+	assert.Equal(t, "0", deviceIndex(discover.Device{ContainerPath: "/dev/rblnfs0"}))
+	assert.Equal(t, "7", deviceIndex(discover.Device{ContainerPath: "/dev/rblnfs7"}))
+	assert.Equal(t, "0", deviceIndex(discover.Device{ContainerPath: "/dev/rbln0"}))
+}
+
+// TestGenerator_Generate_ExcludesRBLNFSFromNPUSpec is the opt-in guard: even
+// when the NPU discovery glob (/dev/rbln*) sweeps up /dev/rblnfs0, the NPU spec
+// must not carry it — neither as a per-device entry nor inside `all`. The RDS
+// device only ships via the separate rebellions.ai/rds class.
+func TestGenerator_Generate_ExcludesRBLNFSFromNPUSpec(t *testing.T) {
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg, nil)
+
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+
+	// Only the NPU entry, "all", and "runtime" — no "rblnfs0", no bare index
+	// for the char device.
+	assertDeviceNames(t, spec, "0", "all", "runtime")
+	all := findDevice(t, spec, "all")
+	for _, dn := range all.ContainerEdits.DeviceNodes {
+		assert.NotContains(t, dn.Path, "rblnfs",
+			"NPU `all` must not carry the RDS char device (opt-in via rebellions.ai/rds only)")
+	}
+}
+
+// TestGenerator_GenerateRDS_PerDeviceAndAll covers the happy path: a separate
+// Kind, per-device entries named by full basename ("rblnfs0"), and the "all"
+// umbrella — each carrying the char device node with "rw" cgroup permissions.
+func TestGenerator_GenerateRDS_PerDeviceAndAll(t *testing.T) {
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			// Intentionally unsorted + mixed with NPU/RSD nodes that must be ignored.
+			{Path: "/dev/rblnfs1", ContainerPath: "/dev/rblnfs1"},
+			{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"},
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg, nil)
+
+	spec, err := gen.GenerateRDS(result)
+	require.NoError(t, err)
+	require.NotNil(t, spec)
+
+	assert.Equal(t, "0.5.0", spec.Version)
+	assert.Equal(t, "rebellions.ai/rds", spec.Kind)
+	// Sorted by numeric suffix, full-basename entry names, then "all".
+	assertDeviceNames(t, spec, "rblnfs0", "rblnfs1", "all")
+
+	dev0 := findDevice(t, spec, "rblnfs0")
+	require.Len(t, dev0.ContainerEdits.DeviceNodes, 1)
+	assert.Equal(t, "/dev/rblnfs0", dev0.ContainerEdits.DeviceNodes[0].Path)
+	assert.Equal(t, "/dev/rblnfs0", dev0.ContainerEdits.DeviceNodes[0].HostPath)
+	assert.Equal(t, "rw", dev0.ContainerEdits.DeviceNodes[0].Permissions)
+
+	all := findDevice(t, spec, "all")
+	assertDevicePaths(t, all, "/dev/rblnfs0", "/dev/rblnfs1")
+}
+
+// TestGenerator_GenerateRDS_NoDevices verifies the spec is suppressed entirely
+// when the host has no RDS device, so callers skip writing an invalid empty-`all`
+// spec (and prune any stale file).
+func TestGenerator_GenerateRDS_NoDevices(t *testing.T) {
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg, nil)
+
+	// No devices at all.
+	spec, err := gen.GenerateRDS(&discover.DiscoveryResult{})
+	require.NoError(t, err)
+	assert.Nil(t, spec)
+
+	// Only NPU/RSD devices present — still no RDS spec.
+	spec, err = gen.GenerateRDS(&discover.DiscoveryResult{
+		Devices: []discover.Device{{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"}},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, spec)
+}
+
+// TestGenerator_GenerateRDS_IgnoresDevicesDisabled is the core DOLIN-2324
+// guarantee: the RDS spec carries the char device node even when
+// Devices.Disabled is set (Kubernetes path). The opt-in class means this never
+// masks device-plugin allocations, so the gate that strips NPU nodes must not
+// touch RDS.
+func TestGenerator_GenerateRDS_IgnoresDevicesDisabled(t *testing.T) {
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Devices.Disabled = true // K8s path
+	gen := NewGenerator(cfg, nil)
+
+	spec, err := gen.GenerateRDS(result)
+	require.NoError(t, err)
+	require.NotNil(t, spec, "RDS spec must be emitted even when Devices.Disabled (K8s)")
+
+	dev0 := findDevice(t, spec, "rblnfs0")
+	require.Len(t, dev0.ContainerEdits.DeviceNodes, 1,
+		"RDS device node must be present on the K8s path (bypasses the NPU gate)")
+	assert.Equal(t, "/dev/rblnfs0", dev0.ContainerEdits.DeviceNodes[0].Path)
+}
+
+// TestGenerator_GenerateRDS_CustomClass verifies the Kind honors a configured
+// RDS class (vendor is shared with the NPU class).
+func TestGenerator_GenerateRDS_CustomClass(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.CDI.Vendor = "example.com"
+	cfg.RDS.Class = "datastore"
+	gen := NewGenerator(cfg, nil)
+
+	spec, err := gen.GenerateRDS(&discover.DiscoveryResult{
+		Devices: []discover.Device{{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, spec)
+	assert.Equal(t, "example.com/datastore", spec.Kind)
+}

@@ -25,6 +25,11 @@ func DefaultConfig() *Config {
 			Vendor:     "rebellions.ai",
 			Class:      "npu",
 		},
+		RDS: RDSConfig{
+			Class:      "rds",
+			OutputPath: "/var/run/cdi/rbln-rds.yaml",
+			Patterns:   []string{"/dev/rblnfs*"},
+		},
 		Libraries: LibraryConfig{
 			Patterns: []string{"librbln-*.so*"},
 			PluginPaths: []string{

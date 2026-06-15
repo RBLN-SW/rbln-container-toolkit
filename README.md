@@ -232,6 +232,45 @@ spec:
         rebellions.ai/npu: "1"
 ```
 
+#### RDS char device (`/dev/rblnfs`)
+
+The RDS (Rebellions Datastore) char device `/dev/rblnfsN` is injected through a
+**separate, opt-in CDI class** — `rebellions.ai/rds` — written to its own spec
+file (`/var/run/cdi/rbln-rds.yaml`). It is deliberately kept out of the
+`rebellions.ai/npu` class so the NPU `=all` selection never carries it, and it is
+emitted **independently of the Kubernetes device-node gate**: because the device
+is only injected into containers that explicitly reference it, it never masks
+device-plugin NPU allocations.
+
+| Entry | What gets injected |
+|---|---|
+| `rebellions.ai/rds=rblnfsN` | `/dev/rblnfsN` char device node (with the matching device-cgroup `rw` rule). |
+| `rebellions.ai/rds=all` | Every discovered `/dev/rblnfs*` node. |
+
+```bash
+# Docker — inject the RDS char device (opt-in)
+docker run --device rebellions.ai/rds=all -it ubuntu:22.04
+docker run --device rebellions.ai/rds=rblnfs0 -it ubuntu:22.04
+```
+
+```yaml
+# Kubernetes Pod — opt-in via CDI annotation (no device-plugin involvement).
+# Requires containerd 1.7+/CRI-O with CDI enabled (enable_cdi + cdi_spec_dirs
+# pointing at the daemon's --cdi-spec-dir).
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    cdi.k8s.io/rblnfs: rebellions.ai/rds=rblnfs0
+spec:
+  containers:
+  - name: app
+    image: ubuntu:22.04
+```
+
+> Pods that do **not** carry the annotation receive no `/dev/rblnfs*`, and NPU
+> (`/dev/rbln*`) classification/injection is unaffected.
+
 ### Kubernetes Deployment (rbln-ctk-daemon)
 
 For Kubernetes clusters, deploy as a DaemonSet. The daemon handles the entire lifecycle:

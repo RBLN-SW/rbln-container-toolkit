@@ -114,7 +114,8 @@ func Setup(opts SetupOptions) error {
 	if err := generateCDISpec(cdiSpecDir, opts.HostRootMount); err != nil {
 		return fmt.Errorf("failed to generate CDI spec: %w", err)
 	}
-	logger.Info("CDI spec generated at %s", filepath.Join(cdiSpecDir, "rbln.yaml"))
+	logger.Info("CDI spec generated at %s (and %s on RDS-capable hosts)",
+		filepath.Join(cdiSpecDir, "rbln.yaml"), filepath.Join(cdiSpecDir, "rbln-rds.yaml"))
 
 	// Step 3: Restart runtime
 	if opts.RestartMode == restart.RestartModeNone {
@@ -153,7 +154,7 @@ func dryRunSetup(opts SetupOptions, configPath, socketPath, cdiSpecDir string, l
 
 	logger.Info("[DRY-RUN] Would perform the following actions:")
 	logger.Info("  1. Configure %s at %s", opts.Runtime, configPath)
-	logger.Info("  2. Generate CDI spec at %s/rbln.yaml", cdiSpecDir)
+	logger.Info("  2. Generate CDI spec at %s/rbln.yaml (and rbln-rds.yaml on RDS-capable hosts)", cdiSpecDir)
 
 	if opts.RestartMode == restart.RestartModeNone {
 		logger.Info("  3. Skip restart (restart-mode=none)")
@@ -307,6 +308,55 @@ func generateCDISpec(cdiSpecDir, hostRootMount string) error {
 		return fmt.Errorf("failed to write CDI spec: %w", err)
 	}
 
+	// RDS char device (/dev/rblnfs*): separate opt-in CDI class emitted into its
+	// own spec file, independent of the NPU spec above (DOLIN-2324). Mirrors the
+	// daemon (regenerateCDISpec) and rbln-ctk paths so `runtime <rt> setup`
+	// doesn't silently omit the RDS class.
+	if err := generateRDSSpec(cfg, cdiSpecDir, gen); err != nil {
+		return fmt.Errorf("failed to generate RDS CDI spec: %w", err)
+	}
+
+	return nil
+}
+
+// generateRDSSpec discovers /dev/rblnfs* and writes the rebellions.ai/rds spec
+// to <cdiSpecDir>/rbln-rds.yaml. RDS discovery is independent of the NPU device
+// policy. When no RDS device is present it prunes any stale spec so non-RDS
+// hosts don't keep a dangling class. Reuses the caller's generator (NoopResolver
+// — RSD attachment is irrelevant to the RDS char device).
+func generateRDSSpec(cfg *config.Config, cdiSpecDir string, gen cdi.Generator) error {
+	rdsOutputPath := filepath.Join(cdiSpecDir, "rbln-rds.yaml")
+	if len(cfg.RDS.Patterns) == 0 {
+		return nil
+	}
+
+	// Shallow-copy the config with the RDS patterns swapped in (discovery forced
+	// on) so the shared device discoverer globs /dev/rblnfs* while keeping the
+	// DriverRoot re-rooting intact.
+	rdsCfg := *cfg
+	rdsCfg.Devices.Patterns = cfg.RDS.Patterns
+	rdsCfg.Devices.Disabled = false
+
+	devices, err := discover.NewDeviceDiscoverer(&rdsCfg).Discover()
+	if err != nil {
+		return fmt.Errorf("failed to discover RDS devices: %w", err)
+	}
+
+	spec, err := gen.GenerateRDS(&discover.DiscoveryResult{Devices: devices})
+	if err != nil {
+		return fmt.Errorf("failed to generate RDS spec: %w", err)
+	}
+	if spec == nil {
+		// No RDS device on this host — prune any stale spec from a prior run.
+		if removeErr := os.Remove(rdsOutputPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("failed to remove stale RDS spec: %w", removeErr)
+		}
+		return nil
+	}
+
+	if err := cdi.NewWriter().Write(spec, rdsOutputPath, "yaml"); err != nil {
+		return fmt.Errorf("failed to write RDS CDI spec: %w", err)
+	}
 	return nil
 }
 

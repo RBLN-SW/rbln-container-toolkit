@@ -40,8 +40,18 @@ const (
 
 // Generator generates CDI specifications.
 type Generator interface {
-	// Generate creates a CDI spec from discovery results.
+	// Generate creates the NPU CDI spec (Kind <vendor>/<class>) from discovery
+	// results.
 	Generate(result *discover.DiscoveryResult) (*specs.Spec, error)
+
+	// GenerateRDS creates the RDS CDI spec (Kind <vendor>/<RDS.Class>) carrying
+	// the /dev/rblnfs* char device nodes found in result. Returns (nil, nil)
+	// when no RDS device is present so callers can skip writing — and prune a
+	// stale spec — on non-RDS-capable hosts. Unlike Generate, this path is NOT
+	// gated by config.Devices.Disabled: the separate opt-in class means the
+	// device node is only injected into containers that reference it, so
+	// emitting it always is safe even on the Kubernetes path.
+	GenerateRDS(result *discover.DiscoveryResult) (*specs.Spec, error)
 }
 
 // generator implements Generator interface.
@@ -74,6 +84,13 @@ const LegacyRuntimeDeviceName = "runtime"
 // rsdEntryPrefix is the entry-name prefix for explicit RSD group selection
 // (e.g., "rsd0", "rsd1"). Per-NPU entries use the bare numeric index ("0", "1").
 const rsdEntryPrefix = "rsd"
+
+// rblnfsEntryPrefix is the entry-name prefix for RDS char device selection
+// (e.g., "rblnfs0", "rblnfs1"). The RDS class uses the full basename as the
+// entry name — matching the documented `--device rebellions.ai/rds=rblnfs0`
+// and `rebellions.ai/rds=rblnfs0` annotation forms — rather than the bare
+// numeric index used by per-NPU entries.
+const rblnfsEntryPrefix = "rblnfs"
 
 // Generate creates a CDI spec from discovery results.
 //
@@ -121,6 +138,73 @@ func (g *generator) Generate(result *discover.DiscoveryResult) (*specs.Spec, err
 	}
 
 	return spec, nil
+}
+
+// GenerateRDS builds the RDS CDI spec (Kind <vendor>/<RDS.Class>) from the
+// /dev/rblnfs* char devices in result. Returns (nil, nil) when no RDS device is
+// present so the caller skips writing the spec (and prunes any stale file) on
+// non-RDS-capable hosts — an `all` entry with no device node would otherwise
+// marshal to empty ContainerEdits and be rejected by strict CDI parsers.
+//
+// Deliberately independent of config.Devices.Disabled: the RDS class is a
+// separate, opt-in selection, so the device node is only injected into the
+// pods/containers that reference it and never masks device-plugin allocations.
+func (g *generator) GenerateRDS(result *discover.DiscoveryResult) (*specs.Spec, error) {
+	rblnfsDevs := g.classifyRBLNFSDevices(result)
+	if len(rblnfsDevs) == 0 {
+		return nil, nil
+	}
+
+	spec := &specs.Spec{
+		Version: CDIVersion,
+		Kind:    fmt.Sprintf("%s/%s", g.cfg.CDI.Vendor, g.cfg.RDS.Class),
+	}
+	spec.Devices = g.buildRBLNFSDeviceEntries(rblnfsDevs)
+	return spec, nil
+}
+
+// classifyRBLNFSDevices filters discovered devices down to the RDS char device
+// class, sorted by numeric suffix. Unlike classifyDevices it is not gated by
+// config.Devices.Disabled — the RDS spec must carry device nodes on the
+// Kubernetes path too.
+func (g *generator) classifyRBLNFSDevices(result *discover.DiscoveryResult) []discover.Device {
+	if result == nil {
+		return nil
+	}
+	var rblnfs []discover.Device
+	for _, dev := range result.Devices {
+		if parseDeviceClass(dev) == deviceClassRBLNFS {
+			rblnfs = append(rblnfs, dev)
+		}
+	}
+	sortDevicesByIndex(rblnfs)
+	return rblnfs
+}
+
+// buildRBLNFSDeviceEntries produces the per-device RDS entries ("rblnfs0",
+// "rblnfs1", ...) plus an "all" umbrella, each carrying the rblnfs char device
+// node. No common edits are attached: the RDS class injects only the device
+// node — the runtime fills in major/minor by stat'ing HostPath, and
+// Permissions "rw" yields the matching device cgroup allow rule.
+func (g *generator) buildRBLNFSDeviceEntries(rblnfsDevs []discover.Device) []specs.Device {
+	// Pre-size for every device plus the trailing `all` umbrella entry.
+	devices := make([]specs.Device, 0, len(rblnfsDevs)+1)
+
+	allEdits := specs.ContainerEdits{}
+	for _, dev := range rblnfsDevs {
+		node := g.createDeviceNode(dev)
+		devices = append(devices, specs.Device{
+			Name: rblnfsEntryPrefix + deviceIndex(dev),
+			ContainerEdits: specs.ContainerEdits{
+				DeviceNodes: []*specs.DeviceNode{&node},
+			},
+		})
+		allNode := g.createDeviceNode(dev)
+		allEdits.DeviceNodes = append(allEdits.DeviceNodes, &allNode)
+	}
+	devices = append(devices, specs.Device{Name: AllDeviceName, ContainerEdits: allEdits})
+
+	return devices
 }
 
 // foldCommonEditsIntoEmptyDevices copies spec.ContainerEdits into any device
@@ -327,23 +411,36 @@ func indexRSDDevices(rsdDevs []discover.Device) map[uint32]discover.Device {
 	return out
 }
 
-// deviceClass identifies whether a device node is an RBLN NPU or an RSD group.
+// deviceClass identifies whether a device node is an RBLN NPU, an RSD group, or
+// an RDS char device.
 type deviceClass int
 
 const (
 	deviceClassUnknown deviceClass = iota
 	deviceClassRBLN
 	deviceClassRSD
+	// deviceClassRBLNFS is the RDS (Rebellions Datastore) char device
+	// /dev/rblnfs*, injected via the separate rebellions.ai/rds CDI class.
+	deviceClassRBLNFS
 )
 
 // parseDeviceClass returns the class of a discovered device by inspecting the
-// basename of its container path (e.g., "rbln0", "rsd1"). Devices whose names
-// don't match either prefix or whose suffix isn't numeric are classified as
-// unknown and skipped by the generator — they shouldn't reach this code given
-// config.Devices.Patterns, but defending keeps a future pattern change from
-// silently producing malformed CDI entries.
+// basename of its container path (e.g., "rbln0", "rsd1", "rblnfs0"). Devices
+// whose names don't match any prefix or whose suffix isn't numeric are
+// classified as unknown and skipped by the generator — they shouldn't reach
+// this code given the configured device patterns, but defending keeps a future
+// pattern change from silently producing malformed CDI entries.
+//
+// The "rblnfs" check MUST come before "rbln": "rbln" is a prefix of "rblnfs",
+// so CutPrefix(base, "rbln") on "rblnfs0" yields "fs0" (which fails Atoi and
+// would otherwise drop the device as unknown instead of classifying it as RDS).
 func parseDeviceClass(dev discover.Device) deviceClass {
 	base := filepath.Base(dev.ContainerPath)
+	if rest, ok := strings.CutPrefix(base, "rblnfs"); ok {
+		if _, err := strconv.Atoi(rest); err == nil {
+			return deviceClassRBLNFS
+		}
+	}
 	if rest, ok := strings.CutPrefix(base, "rbln"); ok {
 		if _, err := strconv.Atoi(rest); err == nil {
 			return deviceClassRBLN
@@ -358,9 +455,14 @@ func parseDeviceClass(dev discover.Device) deviceClass {
 }
 
 // deviceIndex returns the numeric suffix of a device basename
-// (e.g., "/dev/rbln3" → "3"). Assumes parseDeviceClass already accepted dev.
+// (e.g., "/dev/rbln3" → "3", "/dev/rblnfs0" → "0"). Assumes parseDeviceClass
+// already accepted dev. As in parseDeviceClass, "rblnfs" is stripped before
+// "rbln" so "/dev/rblnfs0" yields "0", not "fs0".
 func deviceIndex(dev discover.Device) string {
 	base := filepath.Base(dev.ContainerPath)
+	if rest, ok := strings.CutPrefix(base, "rblnfs"); ok {
+		return rest
+	}
 	if rest, ok := strings.CutPrefix(base, "rbln"); ok {
 		return rest
 	}

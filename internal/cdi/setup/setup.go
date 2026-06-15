@@ -19,6 +19,9 @@ package setup
 import (
 	"fmt"
 	"io"
+	"os"
+
+	"tags.cncf.io/container-device-interface/specs-go"
 
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/cdi"
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/discover"
@@ -119,7 +122,86 @@ func GenerateCDISpec(opts *Options) error {
 		}
 	}
 
+	// RDS char device (/dev/rblnfs*) is injected via the separate
+	// rebellions.ai/rds class and spec file, independent of the NPU path above.
+	return emitRDSSpec(opts, generator)
+}
+
+// emitRDSSpec discovers RDS char devices, builds the rebellions.ai/rds spec, and
+// writes it to opts.RDSOutputPath. When no RDS device is present it removes any
+// stale spec so non-RDS-capable hosts don't keep an empty/invalid file. A nil
+// RDSOutputPath disables file emission entirely (stdout/dry-run preview is
+// handled separately). Discovery/generation failures honor opts.ErrorMode:
+// strict aborts, lenient logs and continues so a missing RDS path never blocks
+// the NPU spec.
+func emitRDSSpec(opts *Options, gen cdi.Generator) error {
+	if opts.RDSOutputPath == "" {
+		return nil
+	}
+
+	spec, err := buildRDSSpec(opts, gen)
+	if err != nil {
+		if opts.ErrorMode == ErrorModeStrict {
+			return err
+		}
+		if opts.Logger != nil {
+			opts.Logger.Warning("RDS CDI spec generation failed: %v", err)
+		}
+		return nil
+	}
+
+	if spec == nil {
+		// No RDS device on this host — prune any stale spec from a prior run so
+		// a node that lost /dev/rblnfs* doesn't keep offering a dangling class.
+		if removeErr := os.Remove(opts.RDSOutputPath); removeErr != nil && !os.IsNotExist(removeErr) && opts.Logger != nil {
+			opts.Logger.Warning("remove stale RDS CDI spec %s: %v", opts.RDSOutputPath, removeErr)
+		}
+		return nil
+	}
+
+	format := opts.Format
+	if format == "" {
+		format = "yaml"
+	}
+	if err := cdi.NewWriter().Write(spec, opts.RDSOutputPath, format); err != nil {
+		return fmt.Errorf("write RDS CDI spec: %w", err)
+	}
+	if opts.Logger != nil {
+		opts.Logger.Info("RDS CDI specification written to %s", opts.RDSOutputPath)
+	}
 	return nil
+}
+
+// buildRDSSpec discovers RDS char devices and builds the rebellions.ai/rds spec.
+// Returns (nil, nil) when no RDS device is present or when RDS patterns are
+// unset. RDS discovery runs regardless of Config.Devices.Disabled.
+func buildRDSSpec(opts *Options, gen cdi.Generator) (*specs.Spec, error) {
+	if opts.Config == nil || len(opts.Config.RDS.Patterns) == 0 {
+		return nil, nil
+	}
+	devices, err := discoverRDSDevices(opts)
+	if err != nil {
+		return nil, fmt.Errorf("discover RDS devices: %w", err)
+	}
+	return gen.GenerateRDS(&discover.DiscoveryResult{Devices: devices})
+}
+
+// discoverRDSDevices runs a device discovery scoped to the RDS glob patterns,
+// independent of Config.Devices.Disabled. On the Kubernetes path the NPU device
+// discoverer is suppressed (device-plugin owns NPU injection), but RDS must
+// still find /dev/rblnfs* because its separate opt-in class never masks
+// device-plugin allocations.
+func discoverRDSDevices(opts *Options) ([]discover.Device, error) {
+	if opts.RDSDeviceDiscoverer != nil {
+		return opts.RDSDeviceDiscoverer.Discover()
+	}
+	// Shallow-copy the config with the RDS patterns swapped in (and discovery
+	// force-enabled) so the shared deviceDiscoverer globs /dev/rblnfs* while
+	// keeping SearchRoot/DriverRoot re-rooting intact.
+	rdsCfg := *opts.Config
+	rdsCfg.Devices.Patterns = opts.Config.RDS.Patterns
+	rdsCfg.Devices.Disabled = false
+	return discover.NewDeviceDiscoverer(&rdsCfg).Discover()
 }
 
 // GenerateCDISpecToWriter generates CDI spec and writes to io.Writer (for dry-run/stdout).
@@ -169,6 +251,31 @@ func GenerateCDISpecToWriter(w io.Writer, opts *Options) error {
 	}
 	if err := writer.WriteToWriter(spec, w, format); err != nil {
 		return fmt.Errorf("write CDI spec: %w", err)
+	}
+
+	// Append the RDS spec to the preview when the host has RDS devices, so a
+	// single `cdi generate --dry-run` shows both Kinds. The multi-document YAML
+	// separator keeps the combined stream valid.
+	rdsSpec, err := buildRDSSpec(opts, generator)
+	if err != nil {
+		// Mirror emitRDSSpec and the discovery block above: strict aborts;
+		// lenient warns and skips the RDS preview so a missing RDS path never
+		// blocks the NPU spec output.
+		if opts.ErrorMode == ErrorModeStrict {
+			return fmt.Errorf("build RDS CDI spec: %w", err)
+		}
+		if opts.Logger != nil {
+			opts.Logger.Warning("RDS CDI spec preview skipped: %v", err)
+		}
+		rdsSpec = nil
+	}
+	if rdsSpec != nil {
+		if _, err := io.WriteString(w, "---\n"); err != nil {
+			return fmt.Errorf("write RDS spec separator: %w", err)
+		}
+		if err := writer.WriteToWriter(rdsSpec, w, format); err != nil {
+			return fmt.Errorf("write RDS CDI spec: %w", err)
+		}
 	}
 
 	return nil

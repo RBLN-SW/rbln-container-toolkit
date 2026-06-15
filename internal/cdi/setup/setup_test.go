@@ -722,3 +722,212 @@ func TestResolveTopology_DevicesDisabled_NoInfoLog(t *testing.T) {
 	assert.Empty(t, logger.infos,
 		"K8s path skips the load, so it must not emit a topology summary")
 }
+
+// rdsTestConfig returns a config with deterministic CDI + RDS settings so the
+// RDS orchestration tests don't depend on host /etc/rbln config or defaults.
+func rdsTestConfig(npuOut, rdsOut string) *config.Config {
+	return &config.Config{
+		CDI: config.CDIConfig{
+			Vendor:     "rebellions.ai",
+			Class:      "npu",
+			OutputPath: npuOut,
+			Format:     "yaml",
+		},
+		RDS: config.RDSConfig{
+			Class:      "rds",
+			OutputPath: rdsOut,
+			Patterns:   []string{"/dev/rblnfs*"},
+		},
+	}
+}
+
+// TestGenerateCDISpec_WritesRDSSpec covers the two-file happy path: the NPU spec
+// and a separate RDS spec (Kind rebellions.ai/rds) are both written, and the RDS
+// spec carries the discovered /dev/rblnfs0 device node.
+func TestGenerateCDISpec_WritesRDSSpec(t *testing.T) {
+	tmpDir := t.TempDir()
+	npuOut := filepath.Join(tmpDir, "rbln.yaml")
+	rdsOut := filepath.Join(tmpDir, "rbln-rds.yaml")
+
+	opts := &Options{
+		Config:              rdsTestConfig(npuOut, rdsOut),
+		OutputPath:          npuOut,
+		RDSOutputPath:       rdsOut,
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{devices: []discover.Device{{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"}}},
+	}
+
+	require.NoError(t, GenerateCDISpec(opts))
+
+	// Both spec files exist.
+	_, err := os.Stat(npuOut)
+	require.NoError(t, err, "NPU spec must be written")
+	rdsData, err := os.ReadFile(rdsOut)
+	require.NoError(t, err, "RDS spec must be written")
+
+	rds := string(rdsData)
+	assert.Contains(t, rds, "kind: rebellions.ai/rds")
+	assert.Contains(t, rds, "name: rblnfs0")
+	assert.Contains(t, rds, "/dev/rblnfs0")
+}
+
+// TestGenerateCDISpec_RDS_K8sPath_EmitsDeviceNode is the DOLIN-2324 K8s guard:
+// with Devices.Disabled=true the NPU device discoverer is skipped, but the RDS
+// spec must still carry the char device node.
+func TestGenerateCDISpec_RDS_K8sPath_EmitsDeviceNode(t *testing.T) {
+	tmpDir := t.TempDir()
+	npuOut := filepath.Join(tmpDir, "rbln.yaml")
+	rdsOut := filepath.Join(tmpDir, "rbln-rds.yaml")
+
+	cfg := rdsTestConfig(npuOut, rdsOut)
+	cfg.Devices.Disabled = true // K8s path: device-plugin owns NPU injection
+
+	opts := &Options{
+		Config:              cfg,
+		OutputPath:          npuOut,
+		RDSOutputPath:       rdsOut,
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{devices: []discover.Device{{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"}}},
+	}
+
+	require.NoError(t, GenerateCDISpec(opts))
+
+	rdsData, err := os.ReadFile(rdsOut)
+	require.NoError(t, err, "RDS spec must be written even on the K8s path")
+	assert.Contains(t, string(rdsData), "/dev/rblnfs0",
+		"RDS device node must survive Devices.Disabled (separate opt-in class)")
+}
+
+// TestGenerateCDISpec_RDS_PrunesStaleSpec verifies that when a host has no RDS
+// device, a stale RDS spec from a prior run is removed rather than left dangling.
+func TestGenerateCDISpec_RDS_PrunesStaleSpec(t *testing.T) {
+	tmpDir := t.TempDir()
+	npuOut := filepath.Join(tmpDir, "rbln.yaml")
+	rdsOut := filepath.Join(tmpDir, "rbln-rds.yaml")
+	require.NoError(t, os.WriteFile(rdsOut, []byte("stale: spec\n"), 0o644))
+
+	opts := &Options{
+		Config:              rdsTestConfig(npuOut, rdsOut),
+		OutputPath:          npuOut,
+		RDSOutputPath:       rdsOut,
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{}, // no rblnfs devices
+	}
+
+	require.NoError(t, GenerateCDISpec(opts))
+
+	_, err := os.Stat(rdsOut)
+	assert.True(t, os.IsNotExist(err), "stale RDS spec must be pruned when no RDS device is present")
+}
+
+// TestGenerateCDISpec_RDS_EmptyOutputPath_NoEmission confirms an empty
+// RDSOutputPath disables file emission entirely (used by the stdout/dry-run path).
+func TestGenerateCDISpec_RDS_EmptyOutputPath_NoEmission(t *testing.T) {
+	tmpDir := t.TempDir()
+	npuOut := filepath.Join(tmpDir, "rbln.yaml")
+	rdsOut := filepath.Join(tmpDir, "rbln-rds.yaml")
+
+	rdsDisc := &mockDeviceDiscoverer{devices: []discover.Device{{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"}}}
+	opts := &Options{
+		Config:              rdsTestConfig(npuOut, rdsOut),
+		OutputPath:          npuOut,
+		RDSOutputPath:       "", // disabled
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: rdsDisc,
+	}
+
+	require.NoError(t, GenerateCDISpec(opts))
+
+	_, err := os.Stat(rdsOut)
+	assert.True(t, os.IsNotExist(err), "no RDS file when RDSOutputPath is empty")
+	assert.Zero(t, rdsDisc.calls, "RDS discovery must be skipped when emission is disabled")
+}
+
+// TestGenerateCDISpecToWriter_AppendsRDSPreview verifies the dry-run/stdout path
+// appends the RDS spec after the NPU spec, separated by a YAML document marker.
+func TestGenerateCDISpecToWriter_AppendsRDSPreview(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := rdsTestConfig("", "")
+
+	opts := &Options{
+		Config:              cfg,
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{devices: []discover.Device{{Path: "/dev/rblnfs0", ContainerPath: "/dev/rblnfs0"}}},
+	}
+
+	require.NoError(t, GenerateCDISpecToWriter(&buf, opts))
+
+	out := buf.String()
+	assert.Contains(t, out, "kind: rebellions.ai/npu")
+	assert.Contains(t, out, "kind: rebellions.ai/rds")
+	assert.Contains(t, out, "\n---\n", "RDS preview must be separated by a YAML document marker")
+}
+
+// TestGenerateCDISpecToWriter_RDS_LenientSkipsOnError verifies the dry-run/stdout
+// path honors ErrorMode for RDS build failures: in lenient mode an RDS discovery
+// error is warned and skipped, not propagated, so the NPU preview still emits.
+func TestGenerateCDISpecToWriter_RDS_LenientSkipsOnError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &mockLogger{}
+	opts := &Options{
+		Config:              rdsTestConfig("", ""),
+		Format:              "yaml",
+		ErrorMode:           ErrorModeLenient,
+		Logger:              logger,
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{err: fmt.Errorf("boom")},
+	}
+
+	err := GenerateCDISpecToWriter(&buf, opts)
+
+	require.NoError(t, err, "lenient mode must not abort the NPU preview on RDS failure")
+	out := buf.String()
+	assert.Contains(t, out, "kind: rebellions.ai/npu")
+	assert.NotContains(t, out, "kind: rebellions.ai/rds", "RDS preview should be skipped on error")
+}
+
+// TestGenerateCDISpecToWriter_RDS_StrictPropagatesError is the strict-mode half:
+// an RDS build failure aborts (matching emitRDSSpec).
+func TestGenerateCDISpecToWriter_RDS_StrictPropagatesError(t *testing.T) {
+	var buf bytes.Buffer
+	opts := &Options{
+		Config:              rdsTestConfig("", ""),
+		Format:              "yaml",
+		ErrorMode:           ErrorModeStrict,
+		Logger:              &mockLogger{},
+		LibraryDiscoverer:   &mockLibraryDiscoverer{},
+		ToolDiscoverer:      &mockToolDiscoverer{},
+		DeviceDiscoverer:    &mockDeviceDiscoverer{},
+		RDSDeviceDiscoverer: &mockDeviceDiscoverer{err: fmt.Errorf("boom")},
+	}
+
+	err := GenerateCDISpecToWriter(&buf, opts)
+	require.Error(t, err, "strict mode must propagate RDS build failure")
+	assert.Contains(t, err.Error(), "RDS")
+}

@@ -318,7 +318,8 @@ func rerootUnder(prefix, abs string) string {
 	return filepath.Join(prefix, strings.TrimPrefix(abs, "/"))
 }
 
-// regenerateCDISpec writes /var/run/cdi/rbln.yaml using the current host
+// regenerateCDISpec writes /var/run/cdi/rbln.yaml (NPU) and, on RDS-capable
+// hosts, /var/run/cdi/rbln-rds.yaml (RDS char device) using the current host
 // state. It is shared between the initial daemon setup and the watcher
 // callback, so a driver upgrade triggers exactly the same generation flow as
 // startup. It deliberately does NOT touch the runtime configuration or
@@ -344,28 +345,35 @@ func regenerateCDISpec(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, con
 		cfg.Libraries.ContainerPath = containerLibraryPath
 	}
 
-	// Kubernetes runtimes delegate device-node injection to device-plugin / DRA,
-	// which allocate RSD group devices dynamically per-Pod. Emitting the host's
-	// static /dev/rbln*, /dev/rsd* nodes into the runtime CDI device would
-	// override that allocation and pin /dev/rsd0 onto every Pod (DOLIN issue
-	// reported on v0.1.1). Docker has no such allocator, so it keeps the
+	// Kubernetes runtimes delegate NPU device-node injection to device-plugin /
+	// DRA, which allocate RSD group devices dynamically per-Pod. Emitting the
+	// host's static /dev/rbln*, /dev/rsd* nodes into the runtime CDI device
+	// would override that allocation and pin /dev/rsd0 onto every Pod (DOLIN
+	// issue reported on v0.1.1). Docker has no such allocator, so it keeps the
 	// v0.1.1 behavior of letting CTK inject the device nodes.
+	//
+	// This gate applies to NPU/RSD nodes only. The RDS char device
+	// (/dev/rblnfs*) is emitted into its own rebellions.ai/rds spec regardless,
+	// because that class is opt-in per container and so never masks
+	// device-plugin allocations (DOLIN-2324).
 	if isKubernetesRuntime(rt) {
 		cfg.Devices.Disabled = true
-		log.Printf("INFO: Runtime %s detected; device-node emission disabled (device-plugin owns per-Pod device injection)", rt)
+		log.Printf("INFO: Runtime %s detected; NPU device-node emission disabled (device-plugin owns per-Pod device injection); RDS class still emitted", rt)
 	}
 
 	specPath := cdiDir + "/rbln.yaml"
+	rdsSpecPath := cdiDir + "/rbln-rds.yaml"
 	if err := os.MkdirAll(cdiDir, 0o755); err != nil {
 		return fmt.Errorf("create CDI dir: %w", err)
 	}
 
 	opts := &cdisetup.Options{
-		Config:     cfg,
-		OutputPath: specPath,
-		Format:     "yaml",
-		ErrorMode:  cdisetup.ErrorModeLenient,
-		Logger:     &daemonLogger{},
+		Config:        cfg,
+		OutputPath:    specPath,
+		RDSOutputPath: rdsSpecPath,
+		Format:        "yaml",
+		ErrorMode:     cdisetup.ErrorModeLenient,
+		Logger:        &daemonLogger{},
 	}
 
 	if err := cdisetup.GenerateCDISpec(opts); err != nil {
@@ -446,10 +454,14 @@ type restarterFactory func(restart.Options) (restart.Restarter, error)
 func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string, newRestarter restarterFactory) error {
 	log.Println("INFO: Removing CDI specification...")
 
-	// Remove CDI spec
+	// Remove CDI specs (NPU + RDS).
 	specPath := cdiDir + "/rbln.yaml"
 	if err := os.Remove(specPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("WARNING: Failed to remove CDI spec: %v", err)
+	}
+	rdsSpecPath := cdiDir + "/rbln-rds.yaml"
+	if err := os.Remove(rdsSpecPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("WARNING: Failed to remove RDS CDI spec: %v", err)
 	}
 
 	log.Println("INFO: Reverting runtime configuration...")

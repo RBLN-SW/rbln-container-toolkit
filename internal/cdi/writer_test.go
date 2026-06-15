@@ -385,7 +385,14 @@ func TestWriter_AtomicWrite_NoTornReadsUnderConcurrency(t *testing.T) {
 	wg.Wait()
 
 	t.Logf("writes=%d reads=%d torn=%d", writes.Load(), reads.Load(), torn.Load())
-	require.Greater(t, writes.Load(), int64(20), "writer should have looped many times")
+	// These floors are sanity checks that the loops actually ran and swapped
+	// specs — NOT throughput assertions. Each write does marshal + temp-file +
+	// fsync + rename + parent-dir fsync, so under `-race` on a contended CI
+	// runner the writer manages only ~20 iterations in 300ms; a high floor
+	// (>20) flakes there (observed writes=19). A low floor still proves the
+	// writer looped and alternated specA/specB while readers parsed the file,
+	// which is all the torn-read guarantee below needs.
+	require.Greater(t, writes.Load(), int64(5), "writer should have looped several times")
 	require.Greater(t, reads.Load(), int64(20), "readers should have observed many specs")
 	assert.Equal(t, int64(0), torn.Load(), "atomic rename must never expose a torn or missing file to readers")
 }

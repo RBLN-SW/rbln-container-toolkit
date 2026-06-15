@@ -8,7 +8,10 @@
 
 # CDI specification settings
 cdi:
-  # Output path for CDI specification
+  # Output path for the CDI specification (informational).
+  # NOTE: the actual write path is controlled by `--output` (rbln-ctk) or
+  # derived from `--cdi-spec-dir` (rbln-ctk-daemon); this key is not read back
+  # at runtime. Shown here so the default location is documented.
   output-path: /var/run/cdi/rbln.yaml
 
   # Output format: yaml or json
@@ -22,6 +25,33 @@ cdi:
   #                        rebellions.ai/npu=rsdM (per RSD group),
   #                        rebellions.ai/npu=all  (every discovered device)
   class: npu
+
+# RDS (Rebellions Datastore) char device settings
+#
+# /dev/rblnfsN is injected through a separate, opt-in CDI class
+# (rebellions.ai/rds) written to its own spec file. It is kept out of the NPU
+# class so the NPU `=all` selection never carries it, and it is emitted
+# regardless of the Kubernetes device-node gate: because the device is only
+# injected into containers that reference it, it never masks device-plugin NPU
+# allocations.
+#
+# Generated entries are: rebellions.ai/rds=rblnfsN (per device),
+#                        rebellions.ai/rds=all     (every /dev/rblnfs*)
+# Usage: docker run --device rebellions.ai/rds=all ...
+#        Pod annotation cdi.k8s.io/rblnfs: rebellions.ai/rds=rblnfs0
+rds:
+  # CDI device class for the RDS char device (vendor is shared with cdi.vendor)
+  class: rds
+
+  # Output path for the RDS CDI specification (informational, same as cdi.output-path).
+  # NOTE: the actual write path is controlled by `--rds-output` (rbln-ctk) or
+  # derived from `--cdi-spec-dir` (rbln-ctk-daemon); this key is not read back at
+  # runtime. Wherever written, it must sit in a CDI spec dir the runtime scans.
+  output-path: /var/run/cdi/rbln-rds.yaml
+
+  # Glob patterns used to discover RDS char devices
+  patterns:
+    - "/dev/rblnfs*"
 
 # Library discovery settings
 libraries:

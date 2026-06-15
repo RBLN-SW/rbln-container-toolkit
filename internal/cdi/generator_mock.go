@@ -39,6 +39,9 @@ var _ Generator = &GeneratorMock{}
 //			GenerateFunc: func(result *discover.DiscoveryResult) (*specs.Spec, error) {
 //				panic("mock out the Generate method")
 //			},
+//			GenerateRDSFunc: func(result *discover.DiscoveryResult) (*specs.Spec, error) {
+//				panic("mock out the GenerateRDS method")
+//			},
 //		}
 //
 //		// use mockedGenerator in code that requires Generator
@@ -49,6 +52,9 @@ type GeneratorMock struct {
 	// GenerateFunc mocks the Generate method.
 	GenerateFunc func(result *discover.DiscoveryResult) (*specs.Spec, error)
 
+	// GenerateRDSFunc mocks the GenerateRDS method.
+	GenerateRDSFunc func(result *discover.DiscoveryResult) (*specs.Spec, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
 		// Generate holds details about calls to the Generate method.
@@ -56,8 +62,14 @@ type GeneratorMock struct {
 			// Result is the result argument value.
 			Result *discover.DiscoveryResult
 		}
+		// GenerateRDS holds details about calls to the GenerateRDS method.
+		GenerateRDS []struct {
+			// Result is the result argument value.
+			Result *discover.DiscoveryResult
+		}
 	}
-	lockGenerate sync.RWMutex
+	lockGenerate    sync.RWMutex
+	lockGenerateRDS sync.RWMutex
 }
 
 // Generate calls GenerateFunc.
@@ -93,5 +105,41 @@ func (mock *GeneratorMock) GenerateCalls() []struct {
 	mock.lockGenerate.RLock()
 	calls = mock.calls.Generate
 	mock.lockGenerate.RUnlock()
+	return calls
+}
+
+// GenerateRDS calls GenerateRDSFunc.
+func (mock *GeneratorMock) GenerateRDS(result *discover.DiscoveryResult) (*specs.Spec, error) {
+	callInfo := struct {
+		Result *discover.DiscoveryResult
+	}{
+		Result: result,
+	}
+	mock.lockGenerateRDS.Lock()
+	mock.calls.GenerateRDS = append(mock.calls.GenerateRDS, callInfo)
+	mock.lockGenerateRDS.Unlock()
+	if mock.GenerateRDSFunc == nil {
+		var (
+			specOut *specs.Spec
+			errOut  error
+		)
+		return specOut, errOut
+	}
+	return mock.GenerateRDSFunc(result)
+}
+
+// GenerateRDSCalls gets all the calls that were made to GenerateRDS.
+// Check the length with:
+//
+//	len(mockedGenerator.GenerateRDSCalls())
+func (mock *GeneratorMock) GenerateRDSCalls() []struct {
+	Result *discover.DiscoveryResult
+} {
+	var calls []struct {
+		Result *discover.DiscoveryResult
+	}
+	mock.lockGenerateRDS.RLock()
+	calls = mock.calls.GenerateRDS
+	mock.lockGenerateRDS.RUnlock()
 	return calls
 }

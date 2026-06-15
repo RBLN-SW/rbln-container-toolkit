@@ -20,6 +20,7 @@ package config
 // Config represents the complete configuration for RBLN Container Toolkit.
 type Config struct {
 	CDI          CDIConfig        `yaml:"cdi"`
+	RDS          RDSConfig        `yaml:"rds"`
 	Libraries    LibraryConfig    `yaml:"libraries"`
 	Tools        []string         `yaml:"tools"`
 	Devices      DeviceConfig     `yaml:"devices"`
@@ -36,10 +37,48 @@ type Config struct {
 
 // CDIConfig represents CDI output settings.
 type CDIConfig struct {
+	// OutputPath is the conventional location of the NPU CDI spec. It is
+	// informational: the actual write path is controlled by `--output`
+	// (rbln-ctk) or derived from `--cdi-spec-dir` (rbln-ctk-daemon), NOT read
+	// back from this field, so setting `cdi.output-path` in the config file has
+	// no runtime effect. It is surfaced by `rbln-ctk info` so operators know
+	// where the spec lands.
 	OutputPath string `yaml:"output-path"`
 	Format     string `yaml:"format"`
 	Vendor     string `yaml:"vendor"`
 	Class      string `yaml:"class"`
+}
+
+// RDSConfig represents the separate CDI device class used to inject the RDS
+// (Rebellions Datastore) char device /dev/rblnfs* into opt-in containers.
+//
+// RDS uses its own CDI class (rebellions.ai/rds) and its own spec file,
+// independent of the NPU class, so injection is opt-in: a container only
+// receives /dev/rblnfs* when it explicitly references the RDS device — Docker
+// `--device rebellions.ai/rds=all` (or `=rblnfs0`), or a Pod annotation
+// `cdi.k8s.io/<key>: rebellions.ai/rds=rblnfs0`. This separation keeps the RDS
+// device node out of the NPU `all` selection and bypasses the Kubernetes
+// Devices.Disabled gate, which only applies to NPU/RSD nodes whose per-Pod
+// injection is owned by device-plugin. Because RDS is only injected into pods
+// that reference it, always emitting its device node never masks device-plugin
+// allocations (the v0.1.2 regression that motivated Devices.Disabled).
+//
+// The vendor and output format are shared with CDIConfig (CDI.Vendor / CDI.Format).
+type RDSConfig struct {
+	// Class is the CDI device class for RDS (vendor is shared with CDI.Vendor).
+	Class string `yaml:"class"`
+	// OutputPath is the conventional location of the RDS CDI spec. Like
+	// CDIConfig.OutputPath, it is informational: the actual write path is
+	// controlled by `--rds-output` (rbln-ctk) or derived from `--cdi-spec-dir`
+	// (rbln-ctk-daemon), NOT read back from this field. Setting
+	// `rds.output-path` in the config file therefore has no runtime effect — it
+	// documents the default so operators know where the spec lands. Wherever it
+	// is written, it must sit in a CDI spec directory the runtime scans so the
+	// separate-Kind file is discovered alongside the NPU spec.
+	OutputPath string `yaml:"output-path"`
+	// Patterns are glob patterns used to discover RDS char devices (e.g.
+	// "/dev/rblnfs*").
+	Patterns []string `yaml:"patterns"`
 }
 
 // LibraryConfig represents library discovery settings.

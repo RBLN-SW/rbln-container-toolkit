@@ -83,7 +83,8 @@ func init() {
 	cdiCmd.AddCommand(cdiListCmd)
 
 	// cdi generate flags
-	cdiGenerateCmd.Flags().StringP("output", "o", "/var/run/cdi/rbln.yaml", "Output path (use '-' for stdout) [$RBLN_CTK_OUTPUT]")
+	cdiGenerateCmd.Flags().StringP("output", "o", "/var/run/cdi/rbln.yaml", "NPU CDI spec output path (use '-' for stdout) [$RBLN_CTK_OUTPUT]")
+	cdiGenerateCmd.Flags().String("rds-output", "/var/run/cdi/rbln-rds.yaml", "RDS CDI spec output path (rebellions.ai/rds, /dev/rblnfs*) [$RBLN_CTK_RDS_OUTPUT]")
 	cdiGenerateCmd.Flags().StringP("format", "f", "yaml", "Output format (yaml or json) [$RBLN_CTK_FORMAT]")
 	cdiGenerateCmd.Flags().String("driver-root", "/", "Driver root path (for CoreOS driver container) [$RBLN_CTK_DRIVER_ROOT]")
 	cdiGenerateCmd.Flags().String("container-library-path", "", "Container path for libraries (enables isolation with LD_LIBRARY_PATH) [$RBLN_CTK_CONTAINER_LIBRARY_PATH]")
@@ -91,6 +92,7 @@ func init() {
 
 	// Bind cdi generate flags to Viper
 	_ = viper.BindPFlag("output", cdiGenerateCmd.Flags().Lookup("output"))
+	_ = viper.BindPFlag("rds-output", cdiGenerateCmd.Flags().Lookup("rds-output"))
 	_ = viper.BindPFlag("format", cdiGenerateCmd.Flags().Lookup("format"))
 	_ = viper.BindPFlag("driver-root", cdiGenerateCmd.Flags().Lookup("driver-root"))
 	_ = viper.BindPFlag("container-library-path", cdiGenerateCmd.Flags().Lookup("container-library-path"))
@@ -121,9 +123,12 @@ func runCDIGenerate(_ *cobra.Command, _ []string) error {
 	}
 
 	outputPath := viper.GetString("output")
+	rdsOutputPath := viper.GetString("rds-output")
 	format := viper.GetString("format")
 
-	// Handle dry-run and stdout cases
+	// Handle dry-run and stdout cases. RDSOutputPath stays empty: the RDS spec
+	// is appended to the preview stream by GenerateCDISpecToWriter rather than
+	// written to a file.
 	if viper.GetBool("dry-run") || outputPath == "-" {
 		return setup.GenerateCDISpecToWriter(
 			os.Stdout,
@@ -135,13 +140,14 @@ func runCDIGenerate(_ *cobra.Command, _ []string) error {
 		)
 	}
 
-	// Generate to file
+	// Generate to file (NPU spec + RDS spec on RDS-capable hosts).
 	err = setup.GenerateCDISpec(
 		&setup.Options{
-			Config:     cfg,
-			OutputPath: outputPath,
-			Format:     format,
-			ErrorMode:  setup.ErrorModeStrict,
+			Config:        cfg,
+			OutputPath:    outputPath,
+			RDSOutputPath: rdsOutputPath,
+			Format:        format,
+			ErrorMode:     setup.ErrorModeStrict,
 		},
 	)
 	if err != nil {
