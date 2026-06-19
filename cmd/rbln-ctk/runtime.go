@@ -99,7 +99,15 @@ func runRuntimeConfigure(_ *cobra.Command, _ []string) error {
 		quiet:       viper.GetBool("quiet"),
 	}
 
-	return executeRuntimeConfigure(opts, runtime.DetectRuntime, runtime.NewConfigurator, os.Stdout, os.Stdin)
+	return executeRuntimeConfigure(opts, detectRuntimeStrict, runtime.NewConfigurator, os.Stdout, os.Stdin)
+}
+
+// detectRuntimeStrict picks the runtime only when exactly one is present.
+// It errors out when several are detected (e.g. a Docker host where Docker's
+// embedded containerd also exposes a socket) so the user is steered to
+// --runtime instead of silently configuring the wrong runtime's config file.
+func detectRuntimeStrict() (runtime.RuntimeType, error) {
+	return runtime.DetectRuntimeStrict(nil)
 }
 
 func executeRuntimeConfigure(opts runtimeConfigureOptions, detectRuntime runtimeDetector, newConfigurator configuratorFactory, stdout io.Writer, stdin io.Reader) error {

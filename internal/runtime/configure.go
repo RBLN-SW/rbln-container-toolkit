@@ -391,8 +391,11 @@ func (c *dockerConfigurator) enableCDI(config map[string]interface{}) {
 		config["features"] = features
 	}
 
-	// Enable CDI devices feature
-	features["cdi-devices"] = true
+	// Enable CDI feature. The Docker daemon recognizes "cdi" (not "cdi-devices");
+	// using the wrong key leaves CDI disabled and `docker run --device` fails with
+	// `could not select device driver "cdi"`. Docker 28.2.0+ enables CDI by default,
+	// 25.0.0~28.1.x require this flag.
+	features["cdi"] = true
 }
 
 // Reverter reverts runtime configuration changes.
@@ -524,6 +527,8 @@ func (r *dockerReverter) Revert() error {
 	}
 
 	if features, ok := config["features"].(map[string]interface{}); ok {
+		delete(features, "cdi")
+		// Also drop the legacy key written by older CTK versions.
 		delete(features, "cdi-devices")
 		if len(features) == 0 {
 			delete(config, "features")

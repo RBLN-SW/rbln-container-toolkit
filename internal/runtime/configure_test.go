@@ -204,7 +204,8 @@ func TestDockerConfigurator_Configure(t *testing.T) {
 	require.NoError(t, err)
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "cdi-devices")
+	assert.Contains(t, string(content), `"cdi"`)
+	assert.NotContains(t, string(content), "cdi-devices")
 }
 
 func TestDockerConfigurator_Configure_ExistingConfig(t *testing.T) {
@@ -229,7 +230,8 @@ func TestDockerConfigurator_Configure_ExistingConfig(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "log-driver")
-	assert.Contains(t, string(content), "cdi-devices")
+	assert.Contains(t, string(content), `"cdi"`)
+	assert.NotContains(t, string(content), "cdi-devices")
 }
 
 func TestDockerConfigurator_DryRun(t *testing.T) {
@@ -536,7 +538,7 @@ func TestDockerReverter_WithBackup(t *testing.T) {
 	backupPath := configPath + ".backup"
 
 	originalContent := `{}`
-	modifiedContent := `{"features":{"cdi-devices":true}}`
+	modifiedContent := `{"features":{"cdi":true}}`
 
 	require.NoError(t, os.WriteFile(backupPath, []byte(originalContent), 0644))
 	require.NoError(t, os.WriteFile(configPath, []byte(modifiedContent), 0644))
@@ -560,6 +562,7 @@ func TestDockerReverter_WithoutBackup(t *testing.T) {
 
 	content := `{
   "features": {
+    "cdi": true,
     "cdi-devices": true,
     "other-feature": true
   },
@@ -576,6 +579,8 @@ func TestDockerReverter_WithoutBackup(t *testing.T) {
 	// Then
 	assert.NoError(t, err)
 	result, _ := os.ReadFile(configPath)
+	assert.NotContains(t, string(result), `"cdi"`)
+	// Legacy key written by older CTK versions is also cleaned up.
 	assert.NotContains(t, string(result), "cdi-devices")
 	assert.Contains(t, string(result), "other-feature")
 	assert.Contains(t, string(result), "storage-driver")

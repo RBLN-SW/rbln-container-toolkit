@@ -2,6 +2,20 @@
 
 ## v0.2.2
 
+- **Fix `rbln-ctk runtime configure --runtime=docker` writing the wrong
+  `daemon.json` key.** It set `features.cdi-devices: true`, but the Docker
+  daemon only recognizes `features.cdi`; the wrong key left CDI disabled and
+  `docker run --device rebellions.ai/npu=N` failed with `could not select
+  device driver "cdi" with capabilities: []`. It now writes `features.cdi:
+  true`, and `runtime revert` cleans up both the correct key and the legacy
+  `cdi-devices` key left by older versions. (Docker 28.2.0+ enables CDI by
+  default; 25.0.0~28.1.x require this flag.)
+- **Stop auto-detection from configuring the wrong runtime on Docker hosts.**
+  Detection used a fixed `containerd > crio > docker` priority, so a Docker
+  host — where Docker's embedded containerd also exposes a socket — had its
+  `/etc/containerd/config.toml` rewritten instead of `daemon.json`. The CLI
+  now refuses to guess when multiple runtimes are present and asks the operator
+  to disambiguate with `-r docker` (matching the daemon's existing behavior).
 - **Inject the RDS (Rebellions Datastore) char device `/dev/rblnfsN` via a
   separate, opt-in CDI class.** A new `rebellions.ai/rds` class — written to its
   own spec file (`/var/run/cdi/rbln-rds.yaml`) — carries the `/dev/rblnfs*` char

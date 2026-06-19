@@ -182,6 +182,12 @@ sudo rbln-ctk runtime configure
 
 Auto-detects the running container runtime and enables CDI support in its configuration.
 
+> **Docker hosts:** Docker ships an embedded containerd whose socket is also present, so a Docker host exposes both sockets. Auto-detection refuses to guess when more than one runtime is found and asks you to disambiguate — pass `-r docker` explicitly:
+>
+> ```bash
+> sudo rbln-ctk runtime configure -r docker
+> ```
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-r, --runtime` | Force specific runtime (`containerd`, `crio`, `docker`) | _(auto-detect)_ |
