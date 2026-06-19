@@ -2,7 +2,7 @@
 # release-package.sh — Build DEB/RPM packages and upload to Nexus.
 #
 # Usage: ./hack/release-package.sh <tag> [dry_run]
-#   tag:     Git tag (e.g., v0.2.0, v0.2.0-rc.1)
+#   tag:     Git tag (e.g., v0.2.0, v0.2.0-rc1)
 #   dry_run: "true" to skip Nexus upload (default: false)
 #
 # Environment variables (required for upload):

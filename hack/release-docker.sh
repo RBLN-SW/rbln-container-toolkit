@@ -2,7 +2,7 @@
 # release-docker.sh — Build and push Docker image to Harbor registry.
 #
 # Usage: ./hack/release-docker.sh <tag> [dry_run]
-#   tag:     Git tag (e.g., v0.2.0, v0.2.0-rc.1)
+#   tag:     Git tag (e.g., v0.2.0, v0.2.0-rc1)
 #   dry_run: "true" to skip push (default: false)
 #
 # Environment variables (required for push):
