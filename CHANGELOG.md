@@ -1,5 +1,27 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.3
+
+- **Stop the daemon from restarting the container runtime on every DaemonSet
+  deploy/delete cycle.** The daemon previously reconfigured and restarted the
+  runtime unconditionally on both startup and shutdown, so repeatedly
+  redeploying it restarted the runtime twice per cycle — on CRI-O the full
+  `systemctl restart crio` left containers stuck. Startup now regenerates the
+  CDI spec unconditionally (runtimes rescan the spec dir at container-creation
+  time, so that never needs a restart) but skips reconfiguring and restarting
+  the runtime when CDI is already enabled. Readiness reflects runtime version
+  defaults (containerd 2.0+ and Docker 28.2.0+ enable CDI by default) rather
+  than a bare config-key match, and verifies `cdi_spec_dirs` still covers the
+  daemon's spec dir before taking that fast path. A node with CDI initially
+  disabled is still restarted once, on the first deploy.
+- **Shutdown no longer reverts the runtime config.** On SIGTERM the daemon now
+  removes only its CDI spec files; it no longer restores the runtime config
+  from `.backup` or restarts the runtime, because reverting would itself
+  require a restart and re-arm the churn above. Consequently, uninstalling the
+  DaemonSet does not return the runtime config to its pre-CTK state — run the
+  one-shot `rbln-ctk-daemon runtime <runtime> cleanup` to explicitly restore
+  the backed-up config and restart the runtime.
+
 ## v0.2.2
 
 - **Fix `rbln-ctk runtime configure --runtime=docker` writing the wrong

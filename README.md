@@ -282,10 +282,28 @@ spec:
 For Kubernetes clusters, deploy as a DaemonSet. The daemon handles the entire lifecycle:
 
 1. Generates CDI spec on startup
-2. Configures the container runtime
-3. Restarts the runtime
+2. Configures the container runtime **only if CDI isn't already enabled**
+3. Restarts the runtime **only when it changed the config** (step 2)
 4. Serves health check endpoints
-5. Cleans up on SIGTERM (pod termination)
+5. Removes the CDI spec files on SIGTERM (pod termination)
+
+> **Runtime restarts are conditional.** The runtime rescans the CDI spec dir
+> at container-creation time, so refreshing specs never needs a restart —
+> only enabling CDI in the runtime config does. If CDI is already enabled
+> (e.g. containerd 2.0+ / Docker 28.2+ where it is on by default, or a node
+> the daemon already configured), redeploying the DaemonSet performs **no**
+> runtime restart. A node with CDI initially disabled is restarted once, on
+> the first deploy.
+
+> **Shutdown does not revert the runtime config.** On SIGTERM the daemon
+> removes only its CDI spec files; it does **not** restore the runtime config
+> from `.backup` or restart the runtime. This is deliberate — reverting would
+> require another restart and re-arm the deploy/delete restart churn, and the
+> left-in-place config lets the next deploy start up without a restart. As a
+> result, uninstalling the DaemonSet does **not** return the runtime config to
+> its pre-CTK state. To explicitly revert a node (restore the backed-up config
+> and restart the runtime), run the one-shot cleanup command, e.g.
+> `rbln-ctk-daemon runtime containerd cleanup`.
 
 #### Deploy
 

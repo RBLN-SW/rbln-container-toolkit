@@ -433,6 +433,27 @@ func TestContainerdConfig_AlreadyEnabled(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestContainerdConfig_EnabledButWrongSpecDir_IsRemediated(t *testing.T) {
+	// Given: enable_cdi is already on, but cdi_spec_dirs omits /var/run/cdi.
+	config := `version = 2
+
+[plugins]
+  [plugins."io.containerd.grpc.v1.cri"]
+    enable_cdi = true
+    cdi_spec_dirs = ["/opt/cdi"]
+`
+
+	// When
+	result := enableCDIInContainerdConfig(config)
+
+	// Then: the daemon's spec dir is appended (converges to ready next cycle),
+	// the original entry is preserved, and enable_cdi is not duplicated.
+	assert.Contains(t, result, `"/var/run/cdi"`)
+	assert.Contains(t, result, `"/opt/cdi"`)
+	assert.Equal(t, 1, strings.Count(result, "enable_cdi = true"))
+	assert.NotEqual(t, config, result, "wrong spec dir must be remediated, not a no-op")
+}
+
 func TestNewReverter(t *testing.T) {
 	tests := []struct {
 		name    string

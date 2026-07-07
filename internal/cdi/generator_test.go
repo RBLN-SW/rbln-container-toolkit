@@ -1862,8 +1862,8 @@ func TestGenerator_GenerateRDS_NoDevices(t *testing.T) {
 	assert.Nil(t, spec)
 }
 
-// TestGenerator_GenerateRDS_IgnoresDevicesDisabled is the core DOLIN-2324
-// guarantee: the RDS spec carries the char device node even when
+// TestGenerator_GenerateRDS_IgnoresDevicesDisabled is the core guarantee:
+// the RDS spec carries the char device node even when
 // Devices.Disabled is set (Kubernetes path). The opt-in class means this never
 // masks device-plugin allocations, so the gate that strips NPU nodes must not
 // touch RDS.

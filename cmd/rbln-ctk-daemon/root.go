@@ -46,9 +46,9 @@ func newRootCmd() *cobra.Command {
 This daemon is designed for Kubernetes DaemonSet deployments. It:
 1. Auto-detects the container runtime (or uses --runtime flag)
 2. Generates CDI specification
-3. Configures the runtime for CDI support
+3. Configures the runtime for CDI support (skipped if already enabled)
 4. Waits for SIGTERM/SIGINT signal
-5. Cleans up configuration on shutdown
+5. Removes CDI spec files on shutdown (runtime config is left untouched)
 
 The daemon ensures containers have access to RBLN NPU devices via CDI.
 
@@ -189,7 +189,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	}
 
 	cleanup := func() error {
-		return doCleanup(rt, cdiDir, hostRoot, configPath, restart.NewRestarter)
+		return doCleanup(cdiDir)
 	}
 
 	d := daemon.NewDaemon(cfg, cleanup)
@@ -348,14 +348,14 @@ func regenerateCDISpec(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, con
 	// Kubernetes runtimes delegate NPU device-node injection to device-plugin /
 	// DRA, which allocate RSD group devices dynamically per-Pod. Emitting the
 	// host's static /dev/rbln*, /dev/rsd* nodes into the runtime CDI device
-	// would override that allocation and pin /dev/rsd0 onto every Pod (DOLIN
-	// issue reported on v0.1.1). Docker has no such allocator, so it keeps the
+	// would override that allocation and pin /dev/rsd0 onto every Pod (a
+	// regression seen on v0.1.1). Docker has no such allocator, so it keeps the
 	// v0.1.1 behavior of letting CTK inject the device nodes.
 	//
 	// This gate applies to NPU/RSD nodes only. The RDS char device
 	// (/dev/rblnfs*) is emitted into its own rebellions.ai/rds spec regardless,
 	// because that class is opt-in per container and so never masks
-	// device-plugin allocations (DOLIN-2324).
+	// device-plugin allocations.
 	if isKubernetesRuntime(rt) {
 		cfg.Devices.Disabled = true
 		log.Printf("INFO: Runtime %s detected; NPU device-node emission disabled (device-plugin owns per-Pod device injection); RDS class still emitted", rt)
@@ -382,6 +382,14 @@ func regenerateCDISpec(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, con
 	return nil
 }
 
+// Injectable seams so tests can drive setup()'s readiness branch without real
+// runtime binaries or a real systemd/socket restarter (mirrors the
+// commandRunner pattern in internal/runtime/version.go).
+var (
+	cdiReadyFunc     = runtime.CDIReady
+	newRestarterFunc = restart.NewRestarter
+)
+
 func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibraryPath, socketPath, configPath string) error {
 	if hostRoot != "/" && hostRoot != "" {
 		if err := installHookBinary(hostRoot); err != nil {
@@ -397,6 +405,21 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 	log.Println("INFO: Configuring runtime...")
 	configPath = resolveConfigPath(rt, hostRoot, configPath)
 	log.Printf("INFO: Using runtime config path: %s", configPath)
+
+	// Idempotent guard: if the runtime already exposes CDI (either configured
+	// on a previous deploy, or on by default for this runtime version), skip
+	// both Configure and the runtime restart. The CDI spec files above are
+	// regenerated regardless — the runtime rescans /var/run/cdi at container
+	// creation, so refreshing specs never needs a restart. This is what keeps
+	// repeated DaemonSet deploy/delete churn from restarting the runtime every
+	// cycle.
+	if ready, readyErr := cdiReadyFunc(rt, configPath, hostRoot); readyErr != nil {
+		log.Printf("WARNING: Could not determine CDI readiness (%v); proceeding with configure", readyErr)
+	} else if ready {
+		log.Printf("INFO: CDI already enabled for %s; skipping runtime configure and restart", rt)
+		return nil
+	}
+
 	configurator, err := runtime.NewConfigurator(rt, configPath, nil)
 	if err != nil {
 		return fmt.Errorf("create configurator: %w", err)
@@ -431,7 +454,7 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 		RetryBackoff:  5 * 1e9, // 5 seconds in nanoseconds
 		Timeout:       30 * 1e9,
 	}
-	restarter, err := restart.NewRestarter(restartOpts)
+	restarter, err := newRestarterFunc(restartOpts)
 	if err != nil {
 		return fmt.Errorf("create restarter: %w", err)
 	}
@@ -445,13 +468,24 @@ func setup(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, containerLibrar
 	return nil
 }
 
-// restarterFactory builds a Restarter from Options. Injected into doCleanup
-// so tests can substitute a mock that returns immediately instead of letting
-// the real systemd/socket restarter chew through retry/timeout windows
-// (~10s per call) against sockets that don't exist on CI runners.
-type restarterFactory func(restart.Options) (restart.Restarter, error)
-
-func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string, newRestarter restarterFactory) error {
+// doCleanup runs on graceful shutdown (SIGTERM/SIGINT/SIGHUP/SIGQUIT). It only
+// removes the CDI spec files; it deliberately does NOT revert the runtime config
+// or restart the runtime.
+//
+// Reverting the config would itself require a restart to take effect, and would
+// re-arm the churn this issue fixes: the next deploy's setup() would re-add
+// enable_cdi and restart again. Leaving the (idempotent) config in place is
+// harmless — CDI simply points at a spec dir that no longer holds rbln specs —
+// and lets the next setup() short-circuit via runtime.CDIReady with no restart.
+//
+// The runtime rescans /var/run/cdi at container-creation time, so dropping the
+// spec files here is enough to stop new containers from receiving RBLN devices
+// without disturbing the running runtime or existing containers.
+//
+// Note: SIGKILL cannot be trapped, so this never runs on a hard kill and the
+// spec files are left behind. That is safe — the next setup() unconditionally
+// regenerates them and still skips the restart via CDIReady.
+func doCleanup(cdiDir string) error {
 	log.Println("INFO: Removing CDI specification...")
 
 	// Remove CDI specs (NPU + RDS).
@@ -462,51 +496,6 @@ func doCleanup(rt runtime.RuntimeType, cdiDir, hostRoot, configPath string, newR
 	rdsSpecPath := cdiDir + "/rbln-rds.yaml"
 	if err := os.Remove(rdsSpecPath); err != nil && !os.IsNotExist(err) {
 		log.Printf("WARNING: Failed to remove RDS CDI spec: %v", err)
-	}
-
-	log.Println("INFO: Reverting runtime configuration...")
-
-	// Revert runtime config (restore backup)
-	configPath = resolveConfigPath(rt, hostRoot, configPath)
-	backupPath := configPath + ".backup"
-
-	if _, err := os.Stat(backupPath); err == nil {
-		backup, err := os.ReadFile(backupPath)
-		if err == nil {
-			_ = os.WriteFile(configPath, backup, 0o644)
-			os.Remove(backupPath)
-		}
-	}
-
-	// Restart runtime
-	log.Println("INFO: Restarting runtime...")
-
-	// Resolve runtime defaults
-	defaults := restart.GetRuntimeDefaults(string(rt))
-	restartMode := defaults.Mode
-	socketPath := defaults.Socket
-
-	// Apply host root prefix for containerized deployments
-	if hostRoot != "" && hostRoot != "/" {
-		socketPath = filepath.Join(hostRoot, socketPath)
-	}
-
-	restartOpts := restart.Options{
-		Mode:          restartMode,
-		Socket:        socketPath,
-		HostRootMount: hostRoot,
-		MaxRetries:    3,
-		RetryBackoff:  5 * time.Second,
-		Timeout:       30 * time.Second,
-	}
-	restarter, err := newRestarter(restartOpts)
-	if err != nil {
-		log.Printf("WARNING: Could not create restarter: %v", err)
-		return nil
-	}
-
-	if err := restarter.Restart(string(rt)); err != nil {
-		log.Printf("WARNING: Runtime restart failed: %v", err)
 	}
 
 	return nil

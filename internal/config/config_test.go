@@ -36,7 +36,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "yaml", cfg.CDI.Format)
 	assert.Equal(t, "rebellions.ai", cfg.CDI.Vendor)
 	assert.Equal(t, "npu", cfg.CDI.Class)
-	// RDS char device class (DOLIN-2324): separate Kind, spec file, and glob.
+	// RDS char device class: separate Kind, spec file, and glob.
 	assert.Equal(t, "rds", cfg.RDS.Class)
 	assert.Equal(t, "/var/run/cdi/rbln-rds.yaml", cfg.RDS.OutputPath)
 	assert.Contains(t, cfg.RDS.Patterns, "/dev/rblnfs*")

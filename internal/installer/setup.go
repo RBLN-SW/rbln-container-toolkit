@@ -309,7 +309,7 @@ func generateCDISpec(cdiSpecDir, hostRootMount string) error {
 	}
 
 	// RDS char device (/dev/rblnfs*): separate opt-in CDI class emitted into its
-	// own spec file, independent of the NPU spec above (DOLIN-2324). Mirrors the
+	// own spec file, independent of the NPU spec above. Mirrors the
 	// daemon (regenerateCDISpec) and rbln-ctk paths so `runtime <rt> setup`
 	// doesn't silently omit the RDS class.
 	if err := generateRDSSpec(cfg, cdiSpecDir, gen); err != nil {

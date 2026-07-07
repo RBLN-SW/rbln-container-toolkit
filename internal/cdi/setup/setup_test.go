@@ -776,8 +776,8 @@ func TestGenerateCDISpec_WritesRDSSpec(t *testing.T) {
 	assert.Contains(t, rds, "/dev/rblnfs0")
 }
 
-// TestGenerateCDISpec_RDS_K8sPath_EmitsDeviceNode is the DOLIN-2324 K8s guard:
-// with Devices.Disabled=true the NPU device discoverer is skipped, but the RDS
+// TestGenerateCDISpec_RDS_K8sPath_EmitsDeviceNode is the K8s guard: with
+// Devices.Disabled=true the NPU device discoverer is skipped, but the RDS
 // spec must still carry the char device node.
 func TestGenerateCDISpec_RDS_K8sPath_EmitsDeviceNode(t *testing.T) {
 	tmpDir := t.TempDir()

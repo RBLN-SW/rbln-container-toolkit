@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/RBLN-SW/rbln-container-toolkit/internal/errors"
@@ -45,6 +46,10 @@ const (
 	// RuntimeDocker is the Docker runtime.
 	RuntimeDocker RuntimeType = "docker"
 )
+
+// defaultCDISpecDir is the CDI spec directory the configurators enable and the
+// daemon writes RBLN specs into. Runtime CDI readiness is judged against it.
+const defaultCDISpecDir = "/var/run/cdi"
 
 // Configurator configures a container runtime for RBLN CDI support.
 type Configurator interface {
@@ -211,11 +216,46 @@ func (c *containerdConfigurator) DryRun() (string, error) {
 	return fmt.Sprintf("--- %s (original)\n+++ %s (modified)\n\n%s", c.configPath, c.configPath, newContent), nil
 }
 
+// enableCDIRe matches an uncommented `enable_cdi = true|false` assignment,
+// tolerant of surrounding whitespace (enable_cdi=true and enable_cdi = true
+// both match). Comments must be stripped first (see stripTOMLComments).
+var enableCDIRe = regexp.MustCompile(`(?m)^\s*enable_cdi\s*=\s*(true|false)\b`)
+
+// stripTOMLComments removes `#` line/inline comments from TOML text. It is a
+// deliberately simple pass — it does not honor `#` inside quoted strings — but
+// the containerd keys we inspect (enable_cdi bool, cdi_spec_dirs paths) never
+// contain one, so this is enough to keep a commented-out `# enable_cdi = true`
+// from being read as an active setting.
+func stripTOMLComments(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			lines[i] = line[:idx]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// containerdEnableCDIValue reports the effective enable_cdi setting from a
+// containerd config, ignoring commented-out lines. present is false when the
+// key is absent, so callers fall back to the runtime version default.
+func containerdEnableCDIValue(content string) (enabled, present bool) {
+	m := enableCDIRe.FindStringSubmatch(stripTOMLComments(content))
+	if m == nil {
+		return false, false
+	}
+	return m[1] == "true", true
+}
+
 // enableCDIInContainerdConfig adds CDI configuration to containerd config.
 func enableCDIInContainerdConfig(content string) string {
-	// Check if CDI is already enabled
-	if strings.Contains(content, "enable_cdi = true") {
-		return content
+	// Check if CDI is already enabled (ignoring commented-out lines).
+	if enabled, present := containerdEnableCDIValue(content); present && enabled {
+		// enable_cdi is already on, but a custom cdi_spec_dirs might omit our
+		// spec dir — remediate it here so the runtime actually scans our specs.
+		// Without this, containerdCDIReady would keep reporting "not ready" and
+		// the daemon would restart every deploy without ever fixing the config.
+		return ensureContainerdSpecDir(content)
 	}
 
 	// If config is empty, create a basic config
@@ -396,6 +436,185 @@ func (c *dockerConfigurator) enableCDI(config map[string]interface{}) {
 	// `could not select device driver "cdi"`. Docker 28.2.0+ enables CDI by default,
 	// 25.0.0~28.1.x require this flag.
 	features["cdi"] = true
+}
+
+// CDIReady reports whether the runtime already exposes CDI with no config
+// change required — i.e. whether the daemon can skip Configure() and, crucially,
+// the runtime restart that follows it.
+//
+// It is deliberately NOT a plain grep for a config key. The decision reflects
+// runtime version defaults: containerd 2.0+ and Docker 28.2.0+ enable CDI by
+// default with the standard spec dirs, so their config may legitimately omit
+// the key while still being ready. hostRoot locates the runtime binary for that
+// version probe (see DetectVersion). When the version can't be determined the
+// check falls back to config-content equivalence: ready iff running Configure()
+// would leave the file byte-for-byte unchanged.
+//
+// configPath must be the effective path the configurator would write (already
+// host-root-prefixed by the caller).
+func CDIReady(rt RuntimeType, configPath, hostRoot string) (bool, error) {
+	switch rt {
+	case RuntimeContainerd:
+		return containerdCDIReady(configPath, hostRoot)
+	case RuntimeCRIO:
+		return crioCDIReady(configPath)
+	case RuntimeDocker:
+		return dockerCDIReady(configPath, hostRoot)
+	default:
+		return false, fmt.Errorf("%w: %s", errors.ErrRuntimeNotFound, rt)
+	}
+}
+
+// containerdCDIReady reports readiness for containerd. containerd 2.0+ enables
+// CDI by default (cdi_spec_dirs defaults include /var/run/cdi), so a 2.0+ node
+// is ready unless the config explicitly disables it. Otherwise (older version,
+// or version unknown) it is ready only when enabling CDI would not change the
+// config file.
+func containerdCDIReady(configPath, hostRoot string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("read config %s: %w", configPath, err)
+	}
+	content := string(data)
+
+	// Guard against a config that enables CDI but points cdi_spec_dirs away from
+	// the dir this daemon writes specs into: the runtime would never see our
+	// specs, so we must NOT report ready (which would skip the restart and leave
+	// containers silently without devices). An absent cdi_spec_dirs is fine —
+	// containerd's default list includes /var/run/cdi.
+	if !containerdScansDefaultSpecDir(content) {
+		return false, nil
+	}
+
+	// An explicit (uncommented) enable_cdi setting wins over version defaults.
+	if enabled, present := containerdEnableCDIValue(content); present {
+		return enabled, nil
+	}
+
+	// enable_cdi unset → rely on the runtime version default: containerd 2.0+
+	// enables CDI by default; older versions (and an undetectable version) need
+	// Configure to write it.
+	if v, ok := DetectVersion(RuntimeContainerd, hostRoot); ok && v.AtLeast(2, 0) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// cdiSpecDirsRe captures the bracketed value of a cdi_spec_dirs assignment,
+// spanning newlines so both inline and multi-line arrays are matched. Comments
+// must be stripped first (see stripTOMLComments).
+var cdiSpecDirsRe = regexp.MustCompile(`(?s)cdi_spec_dirs\s*=\s*\[(.*?)\]`)
+
+// tomlQuotedRe extracts the quoted entries from a TOML array body.
+var tomlQuotedRe = regexp.MustCompile(`"([^"]*)"`)
+
+// containerdSpecDirs returns the configured cdi_spec_dirs entries and whether
+// the setting is present (uncommented).
+func containerdSpecDirs(content string) (dirs []string, present bool) {
+	m := cdiSpecDirsRe.FindStringSubmatch(stripTOMLComments(content))
+	if m == nil {
+		return nil, false
+	}
+	for _, q := range tomlQuotedRe.FindAllStringSubmatch(m[1], -1) {
+		dirs = append(dirs, q[1])
+	}
+	return dirs, true
+}
+
+// containerdScansDefaultSpecDir reports whether containerd would scan
+// defaultCDISpecDir (the dir the configurator writes RBLN specs into). When
+// cdi_spec_dirs is unset, containerd applies its built-in default which includes
+// that dir; when set explicitly, the parsed list must contain it. The membership
+// test is scoped to the cdi_spec_dirs array value — not a file-wide substring
+// search — so an unrelated /var/run/cdi elsewhere in the config can't spoof it.
+func containerdScansDefaultSpecDir(content string) bool {
+	dirs, present := containerdSpecDirs(content)
+	if !present {
+		return true
+	}
+	for _, d := range dirs {
+		if filepath.Clean(d) == defaultCDISpecDir {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureContainerdSpecDir appends defaultCDISpecDir to an explicit cdi_spec_dirs
+// list that doesn't already cover it, rewriting the array in canonical inline
+// form. If cdi_spec_dirs is absent (containerd's default already includes our
+// dir) or already covers it, content is returned unchanged.
+func ensureContainerdSpecDir(content string) string {
+	dirs, present := containerdSpecDirs(content)
+	if !present {
+		return content
+	}
+	for _, d := range dirs {
+		if filepath.Clean(d) == defaultCDISpecDir {
+			return content
+		}
+	}
+
+	dirs = append(dirs, defaultCDISpecDir)
+	quoted := make([]string, len(dirs))
+	for i, d := range dirs {
+		quoted[i] = fmt.Sprintf("%q", d)
+	}
+	replacement := "cdi_spec_dirs = [" + strings.Join(quoted, ", ") + "]"
+	return cdiSpecDirsRe.ReplaceAllLiteralString(content, replacement)
+}
+
+// crioCDIReady reports readiness for CRI-O. CTK owns a dedicated drop-in file,
+// so readiness is simply whether that drop-in already exists with exactly the
+// content Configure() would write.
+func crioCDIReady(configPath string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read config %s: %w", configPath, err)
+	}
+	want := (&crioConfigurator{configPath: configPath}).generateConfig()
+	return string(data) == want, nil
+}
+
+// dockerCDIReady reports readiness for Docker. Docker 28.2.0+ enables CDI by
+// default, so it is ready unless features.cdi is explicitly set to false.
+// Otherwise readiness requires features.cdi == true in the config.
+func dockerCDIReady(configPath, hostRoot string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("read config %s: %w", configPath, err)
+	}
+
+	config := make(map[string]interface{})
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &config); err != nil {
+			return false, fmt.Errorf("parse config %s: %w", configPath, err)
+		}
+	}
+
+	cdi, hasKey := dockerCDIFeature(config)
+
+	if v, ok := DetectVersion(RuntimeDocker, hostRoot); ok && v.AtLeast(28, 2) {
+		// Default-on; ready unless explicitly disabled.
+		return !hasKey || cdi, nil
+	}
+	return hasKey && cdi, nil
+}
+
+// dockerCDIFeature returns the features.cdi value and whether the key is set.
+func dockerCDIFeature(config map[string]interface{}) (value, present bool) {
+	features, ok := config["features"].(map[string]interface{})
+	if !ok {
+		return false, false
+	}
+	v, ok := features["cdi"].(bool)
+	if !ok {
+		return false, false
+	}
+	return v, true
 }
 
 // Reverter reverts runtime configuration changes.

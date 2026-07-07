@@ -256,15 +256,83 @@ func TestRootCmdFlagShortcuts(t *testing.T) {
 	}
 }
 
-// noopRestarterFactory is the doCleanup factory tests inject so the cleanup
-// path never reaches the real systemd/socket restarter. Without this the
-// production factory would burn ~10s per subtest in retry/timeout against
-// sockets that don't exist on CI runners (TestDoCleanup alone used to take
-// over two minutes).
-func noopRestarterFactory(_ restart.Options) (restart.Restarter, error) {
-	return &restart.RestarterMock{
-		RestartFunc: func(_ string) error { return nil },
-	}, nil
+// stubSetupSeams swaps setup()'s cdiReadyFunc / newRestarterFunc for the test
+// and returns a pointer that records whether the restarter was ever invoked.
+func stubSetupSeams(t *testing.T, ready bool, readyErr error) *bool {
+	t.Helper()
+	origReady := cdiReadyFunc
+	origRestarter := newRestarterFunc
+	t.Cleanup(func() {
+		cdiReadyFunc = origReady
+		newRestarterFunc = origRestarter
+	})
+
+	restarted := false
+	cdiReadyFunc = func(_ runtime.RuntimeType, _, _ string) (bool, error) {
+		return ready, readyErr
+	}
+	newRestarterFunc = func(_ restart.Options) (restart.Restarter, error) {
+		return &restart.RestarterMock{
+			RestartFunc: func(_ string) error { restarted = true; return nil },
+		}, nil
+	}
+	return &restarted
+}
+
+func TestSetup_ReadinessBranch(t *testing.T) {
+	t.Run("skips configure and restart when CDI is already ready", func(t *testing.T) {
+		// Given: CDIReady reports ready and a config with known content.
+		restarted := stubSetupSeams(t, true, nil)
+		tmp := t.TempDir()
+		cfgPath := filepath.Join(tmp, "config.toml")
+		require.NoError(t, os.WriteFile(cfgPath, []byte("original"), 0o644))
+		cdiDir := filepath.Join(tmp, "cdi")
+
+		// When
+		err := setup(runtime.RuntimeContainerd, cdiDir, "/", "/", "", "", cfgPath)
+
+		// Then: no restart, and Configure never ran (config file untouched).
+		assert.NoError(t, err)
+		assert.False(t, *restarted, "restart must be skipped when ready")
+		content, readErr := os.ReadFile(cfgPath)
+		require.NoError(t, readErr)
+		assert.Equal(t, "original", string(content), "Configure must not run when ready")
+	})
+
+	t.Run("configures and restarts when not ready", func(t *testing.T) {
+		// Given: CDIReady reports not-ready.
+		restarted := stubSetupSeams(t, false, nil)
+		tmp := t.TempDir()
+		cfgPath := filepath.Join(tmp, "config.toml")
+		require.NoError(t, os.WriteFile(cfgPath, []byte("version = 2\n[plugins]\n"), 0o644))
+		cdiDir := filepath.Join(tmp, "cdi")
+
+		// When
+		err := setup(runtime.RuntimeContainerd, cdiDir, "/", "/", "", "", cfgPath)
+
+		// Then: Configure wrote enable_cdi and the runtime was restarted.
+		assert.NoError(t, err)
+		assert.True(t, *restarted, "restart must run when not ready")
+		content, readErr := os.ReadFile(cfgPath)
+		require.NoError(t, readErr)
+		assert.Contains(t, string(content), "enable_cdi = true")
+	})
+
+	t.Run("falls through to configure+restart when readiness errors", func(t *testing.T) {
+		// Given: CDIReady returns an error — setup must not skip.
+		restarted := stubSetupSeams(t, false, assert.AnError)
+		tmp := t.TempDir()
+		cfgPath := filepath.Join(tmp, "config.toml")
+		require.NoError(t, os.WriteFile(cfgPath, []byte("version = 2\n[plugins]\n"), 0o644))
+		cdiDir := filepath.Join(tmp, "cdi")
+
+		// When
+		err := setup(runtime.RuntimeContainerd, cdiDir, "/", "/", "", "", cfgPath)
+
+		// Then
+		assert.NoError(t, err)
+		assert.True(t, *restarted, "readiness error must fall through to restart")
+	})
 }
 
 func TestDoCleanup(t *testing.T) {
@@ -273,7 +341,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err := doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
@@ -287,7 +355,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err = doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
@@ -296,7 +364,7 @@ func TestDoCleanup(t *testing.T) {
 	})
 
 	t.Run("removes existing RDS CDI spec", func(t *testing.T) {
-		// Given both the NPU and RDS specs exist (DOLIN-2324).
+		// Given both the NPU and RDS specs exist.
 		tmpDir := t.TempDir()
 		specPath := tmpDir + "/rbln.yaml"
 		rdsSpecPath := tmpDir + "/rbln-rds.yaml"
@@ -304,7 +372,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, os.WriteFile(rdsSpecPath, []byte("test: rds"), 0644))
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err := doCleanup(tmpDir)
 
 		// Then both specs are removed.
 		assert.NoError(t, err)
@@ -312,17 +380,6 @@ func TestDoCleanup(t *testing.T) {
 		assert.True(t, os.IsNotExist(err))
 		_, err = os.Stat(rdsSpecPath)
 		assert.True(t, os.IsNotExist(err))
-	})
-
-	t.Run("handles gracefully with missing backup", func(t *testing.T) {
-		// Given
-		tmpDir := t.TempDir()
-
-		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
-
-		// Then
-		assert.NoError(t, err)
 	})
 
 	t.Run("is idempotent - cleanup twice succeeds", func(t *testing.T) {
@@ -333,34 +390,14 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err = doCleanup(tmpDir)
 		assert.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err = doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
-	})
-
-	t.Run("removes CDI spec even if backup exists", func(t *testing.T) {
-		// Given
-		tmpDir := t.TempDir()
-		specPath := tmpDir + "/rbln.yaml"
-		backupPath := tmpDir + "/rbln.yaml.backup"
-
-		err := os.WriteFile(specPath, []byte("test: spec"), 0644)
-		require.NoError(t, err)
-		err = os.WriteFile(backupPath, []byte("backup: spec"), 0644)
-		require.NoError(t, err)
-
-		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
-
-		// Then
-		assert.NoError(t, err)
-		_, err = os.Stat(specPath)
-		assert.True(t, os.IsNotExist(err))
 	})
 
 	t.Run("handles read-only CDI directory gracefully", func(t *testing.T) {
@@ -375,59 +412,7 @@ func TestDoCleanup(t *testing.T) {
 		defer os.Chmod(tmpDir, 0755)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
-
-		// Then
-		assert.NoError(t, err)
-	})
-
-	t.Run("handles multiple runtime types", func(t *testing.T) {
-		// Given
-		runtimes := []runtime.RuntimeType{"containerd", "crio", "docker"}
-
-		for _, rt := range runtimes {
-			t.Run("runtime_"+string(rt), func(t *testing.T) {
-				// Given
-				tmpDir := t.TempDir()
-				specPath := tmpDir + "/rbln.yaml"
-				err := os.WriteFile(specPath, []byte("test: spec"), 0644)
-				require.NoError(t, err)
-
-				// When
-				err = doCleanup(rt, tmpDir, "/", "", noopRestarterFactory)
-
-				// Then
-				assert.NoError(t, err)
-				_, err = os.Stat(specPath)
-				assert.True(t, os.IsNotExist(err))
-			})
-		}
-	})
-
-	t.Run("handles backup file in CDI directory", func(t *testing.T) {
-		// Given
-		tmpDir := t.TempDir()
-		backupPath := tmpDir + "/rbln.yaml.backup"
-		err := os.WriteFile(backupPath, []byte("backup: spec"), 0644)
-		require.NoError(t, err)
-
-		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
-
-		// Then
-		assert.NoError(t, err)
-	})
-
-	t.Run("handles corrupted backup file gracefully", func(t *testing.T) {
-		// Given
-		tmpDir := t.TempDir()
-		backupPath := tmpDir + "/rbln.yaml.backup"
-		err := os.WriteFile(backupPath, []byte("backup: spec"), 0000)
-		require.NoError(t, err)
-		defer os.Chmod(backupPath, 0644)
-
-		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err = doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
@@ -438,7 +423,7 @@ func TestDoCleanup(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// When
-		err := doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err := doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
@@ -456,7 +441,7 @@ func TestDoCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		// When
-		err = doCleanup(runtime.RuntimeType("containerd"), tmpDir, "/", "", noopRestarterFactory)
+		err = doCleanup(tmpDir)
 
 		// Then
 		assert.NoError(t, err)
@@ -541,104 +526,38 @@ func TestResolveConfigPath(t *testing.T) {
 	}
 }
 
-func TestDoCleanup_WithConfigPathOverride(t *testing.T) {
-	t.Run("uses override config path for backup restoration", func(t *testing.T) {
-		// Given: a tmpDir simulating host root with custom config path
-		tmpDir := t.TempDir()
-		customConfigDir := filepath.Join(tmpDir, "var", "lib", "rancher", "rke2", "agent", "etc", "containerd")
-		require.NoError(t, os.MkdirAll(customConfigDir, 0o755))
+// TestDoCleanup_DoesNotRevertConfig locks in the behavior change: graceful
+// cleanup removes only the CDI spec files and must NOT restore the runtime
+// config from its .backup (reverting would require a restart and re-arm the
+// deploy/delete restart churn). The next setup() short-circuits via
+// runtime.CDIReady instead.
+func TestDoCleanup_DoesNotRevertConfig(t *testing.T) {
+	// Given: a modified runtime config with a .backup alongside the CDI spec.
+	tmpDir := t.TempDir()
+	cdiDir := filepath.Join(tmpDir, "cdi")
+	require.NoError(t, os.MkdirAll(cdiDir, 0o755))
+	specPath := filepath.Join(cdiDir, "rbln.yaml")
+	require.NoError(t, os.WriteFile(specPath, []byte("test: spec"), 0o644))
 
-		configFile := filepath.Join(customConfigDir, "config.toml")
-		backupFile := configFile + ".backup"
-		require.NoError(t, os.WriteFile(configFile, []byte("modified config"), 0o644))
-		require.NoError(t, os.WriteFile(backupFile, []byte("original config"), 0o644))
+	configFile := filepath.Join(tmpDir, "config.toml")
+	backupFile := configFile + ".backup"
+	require.NoError(t, os.WriteFile(configFile, []byte("modified config"), 0o644))
+	require.NoError(t, os.WriteFile(backupFile, []byte("original config"), 0o644))
 
-		cdiDir := filepath.Join(tmpDir, "cdi")
-		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
+	// When
+	err := doCleanup(cdiDir)
 
-		// When: cleanup with override config path pointing to the full path (no hostRoot prefix needed)
-		err := doCleanup(
-			runtime.RuntimeContainerd,
-			cdiDir,
-			"/",
-			configFile,
-			noopRestarterFactory,
-		)
+	// Then: the CDI spec is gone, but the config and its backup are untouched.
+	assert.NoError(t, err)
+	_, err = os.Stat(specPath)
+	assert.True(t, os.IsNotExist(err))
 
-		// Then: backup should be restored
-		assert.NoError(t, err)
-		content, err := os.ReadFile(configFile)
-		require.NoError(t, err)
-		assert.Equal(t, "original config", string(content))
+	content, err := os.ReadFile(configFile)
+	require.NoError(t, err)
+	assert.Equal(t, "modified config", string(content), "config must not be reverted")
 
-		// backup file should be removed
-		_, err = os.Stat(backupFile)
-		assert.True(t, os.IsNotExist(err))
-	})
-
-	t.Run("uses override config path as-is even with hostRoot set", func(t *testing.T) {
-		// Given: simulate /host mount alongside an independently-mounted
-		// RW config path (the operator-managed layout).
-		// The override is the final path inside the daemon filesystem —
-		// hostRoot MUST NOT be prefixed to it.
-		tmpDir := t.TempDir()
-		hostRoot := filepath.Join(tmpDir, "host")
-		require.NoError(t, os.MkdirAll(hostRoot, 0o755))
-
-		overrideDir := filepath.Join(tmpDir, "runtime", "config-dir")
-		require.NoError(t, os.MkdirAll(overrideDir, 0o755))
-		overridePath := filepath.Join(overrideDir, "config.toml")
-		require.NoError(t, os.WriteFile(overridePath, []byte("modified"), 0o644))
-		require.NoError(t, os.WriteFile(overridePath+".backup", []byte("original"), 0o644))
-
-		cdiDir := filepath.Join(tmpDir, "cdi")
-		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
-
-		// When: cleanup with both hostRoot and an absolute override path
-		err := doCleanup(
-			runtime.RuntimeContainerd,
-			cdiDir,
-			hostRoot,
-			overridePath,
-			noopRestarterFactory,
-		)
-
-		// Then: backup at the override path (no hostRoot prefix) is restored
-		assert.NoError(t, err)
-		content, err := os.ReadFile(overridePath)
-		require.NoError(t, err)
-		assert.Equal(t, "original", string(content))
-	})
-
-	t.Run("applies hostRoot prefix to default config path", func(t *testing.T) {
-		// Given: simulate /host mount with default containerd config
-		tmpDir := t.TempDir()
-		hostRoot := tmpDir
-
-		defaultConfigPath := filepath.Join(hostRoot, "etc", "containerd", "config.toml")
-		require.NoError(t, os.MkdirAll(filepath.Dir(defaultConfigPath), 0o755))
-
-		require.NoError(t, os.WriteFile(defaultConfigPath, []byte("modified"), 0o644))
-		require.NoError(t, os.WriteFile(defaultConfigPath+".backup", []byte("original"), 0o644))
-
-		cdiDir := filepath.Join(tmpDir, "cdi")
-		require.NoError(t, os.MkdirAll(cdiDir, 0o755))
-
-		// When: cleanup with hostRoot but no config path override (empty = default)
-		err := doCleanup(
-			runtime.RuntimeContainerd,
-			cdiDir,
-			hostRoot,
-			"",
-			noopRestarterFactory,
-		)
-
-		// Then: backup at hostRoot + default path should be restored
-		assert.NoError(t, err)
-		content, err := os.ReadFile(defaultConfigPath)
-		require.NoError(t, err)
-		assert.Equal(t, "original", string(content))
-	})
+	_, err = os.Stat(backupFile)
+	assert.NoError(t, err, "backup must be left in place")
 }
 
 func TestDetectHostRoot(t *testing.T) {

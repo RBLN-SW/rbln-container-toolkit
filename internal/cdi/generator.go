@@ -367,7 +367,7 @@ func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []sp
 	}
 	// `runtime` is a v0.1.x compatibility alias of `all` (identical content),
 	// kept so containers / device-plugin builds that still pin
-	// `npu=runtime` (the pre-DOLIN-1219 name) keep matching the spec without
+	// `npu=runtime` (the earlier legacy name) keep matching the spec without
 	// a manifest rewrite.
 	devices = append(devices,
 		specs.Device{Name: AllDeviceName, ContainerEdits: allEdits},

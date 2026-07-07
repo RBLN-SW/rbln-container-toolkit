@@ -971,7 +971,7 @@ func TestGenerateCDISpec_PermissionError(t *testing.T) {
 
 // TestGenerateRDSSpec_WritesSpecWhenDevicePresent verifies the installer path
 // (rbln-ctk-daemon runtime <rt> setup) emits the separate rebellions.ai/rds
-// spec when /dev/rblnfs* is present (DOLIN-2324). A temp dir stands in for the
+// spec when /dev/rblnfs* is present. A temp dir stands in for the
 // device root so the test doesn't depend on real host devices.
 func TestGenerateRDSSpec_WritesSpecWhenDevicePresent(t *testing.T) {
 	root := t.TempDir()
