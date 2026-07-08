@@ -279,6 +279,23 @@ func stubSetupSeams(t *testing.T, ready bool, readyErr error) *bool {
 	return &restarted
 }
 
+// stubSetupSeamsRealReady keeps the real cdiReadyFunc (so the actual parse path
+// runs) but stubs the restarter with a recorder, for tests that drive setup()
+// through genuine config parsing.
+func stubSetupSeamsRealReady(t *testing.T) *bool {
+	t.Helper()
+	origRestarter := newRestarterFunc
+	t.Cleanup(func() { newRestarterFunc = origRestarter })
+
+	restarted := false
+	newRestarterFunc = func(_ restart.Options) (restart.Restarter, error) {
+		return &restart.RestarterMock{
+			RestartFunc: func(_ string) error { restarted = true; return nil },
+		}, nil
+	}
+	return &restarted
+}
+
 func TestSetup_ReadinessBranch(t *testing.T) {
 	t.Run("skips configure and restart when CDI is already ready", func(t *testing.T) {
 		// Given: CDIReady reports ready and a config with known content.
@@ -316,6 +333,27 @@ func TestSetup_ReadinessBranch(t *testing.T) {
 		content, readErr := os.ReadFile(cfgPath)
 		require.NoError(t, readErr)
 		assert.Contains(t, string(content), "enable_cdi = true")
+	})
+
+	t.Run("fails fast when the existing config is not valid TOML", func(t *testing.T) {
+		// A syntactically invalid config.toml can't be parsed for readiness and
+		// can't be safely rewritten, so setup() surfaces a hard error (rather
+		// than best-effort mangling the file). Use the real CDIReady so the
+		// parse path actually runs; the restarter must never be reached.
+		restarted := stubSetupSeamsRealReady(t)
+		tmp := t.TempDir()
+		cfgPath := filepath.Join(tmp, "config.toml")
+		require.NoError(t, os.WriteFile(cfgPath, []byte("this is = = not toml [[["), 0o644))
+		cdiDir := filepath.Join(tmp, "cdi")
+
+		// When
+		err := setup(runtime.RuntimeContainerd, cdiDir, "/", "/", "", "", cfgPath)
+
+		// Then
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "configure runtime")
+		assert.Contains(t, err.Error(), cfgPath, "error must name the offending config file")
+		assert.False(t, *restarted, "must not restart when the config can't be parsed")
 	})
 
 	t.Run("falls through to configure+restart when readiness errors", func(t *testing.T) {

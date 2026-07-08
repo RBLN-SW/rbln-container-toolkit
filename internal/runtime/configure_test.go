@@ -406,12 +406,40 @@ func TestContainerdConfig_EnableCDI(t *testing.T) {
 `
 
 	// When
-	result := enableCDIInContainerdConfig(config)
+	result, err := enableCDIInContainerdConfig(config)
+	require.NoError(t, err)
 
-	// Then
-	assert.Contains(t, result, "enable_cdi = true")
-	assert.Contains(t, result, "version = 2")
+	// Then: re-parsing the result shows CDI enabled and the default spec dir
+	// covered, and the unrelated setting is preserved.
+	cfg, err := parseContainerdConfig(result)
+	require.NoError(t, err)
+	enabled, present := cfg.enableCDI()
+	assert.True(t, present)
+	assert.True(t, enabled)
+	assert.True(t, cfg.scansDefaultSpecDir())
 	assert.Contains(t, result, "default_runtime_name")
+}
+
+func TestContainerdConfig_EmptyConfig_CreatesBasicConfig(t *testing.T) {
+	// Given: no pre-existing config (brand-new node, first-run path).
+	// When
+	result, err := enableCDIInContainerdConfig("")
+	require.NoError(t, err)
+
+	// Then: re-parsing yields version 2, CDI enabled, and both default spec dirs.
+	cfg, err := parseContainerdConfig(result)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(2), cfg.root["version"], "fresh config pins version = 2")
+
+	enabled, present := cfg.enableCDI()
+	assert.True(t, present)
+	assert.True(t, enabled)
+
+	dirs, spresent := cfg.specDirs()
+	require.True(t, spresent)
+	assert.Contains(t, dirs, "/etc/cdi")
+	assert.Contains(t, dirs, "/var/run/cdi")
 }
 
 func TestContainerdConfig_AlreadyEnabled(t *testing.T) {
@@ -426,11 +454,11 @@ func TestContainerdConfig_AlreadyEnabled(t *testing.T) {
 `
 
 	// When
-	result := enableCDIInContainerdConfig(config)
+	result, err := enableCDIInContainerdConfig(config)
+	require.NoError(t, err)
 
-	// Then
-	count := strings.Count(result, "enable_cdi = true")
-	assert.Equal(t, 1, count)
+	// Then: enable_cdi is not duplicated.
+	assert.Equal(t, 1, strings.Count(result, "enable_cdi = true"))
 }
 
 func TestContainerdConfig_EnabledButWrongSpecDir_IsRemediated(t *testing.T) {
@@ -444,12 +472,17 @@ func TestContainerdConfig_EnabledButWrongSpecDir_IsRemediated(t *testing.T) {
 `
 
 	// When
-	result := enableCDIInContainerdConfig(config)
+	result, err := enableCDIInContainerdConfig(config)
+	require.NoError(t, err)
 
 	// Then: the daemon's spec dir is appended (converges to ready next cycle),
 	// the original entry is preserved, and enable_cdi is not duplicated.
-	assert.Contains(t, result, `"/var/run/cdi"`)
-	assert.Contains(t, result, `"/opt/cdi"`)
+	cfg, err := parseContainerdConfig(result)
+	require.NoError(t, err)
+	dirs, present := cfg.specDirs()
+	require.True(t, present)
+	assert.Contains(t, dirs, "/opt/cdi")
+	assert.Contains(t, dirs, "/var/run/cdi")
 	assert.Equal(t, 1, strings.Count(result, "enable_cdi = true"))
 	assert.NotEqual(t, config, result, "wrong spec dir must be remediated, not a no-op")
 }

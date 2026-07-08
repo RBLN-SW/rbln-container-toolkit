@@ -21,6 +21,17 @@
   DaemonSet does not return the runtime config to its pre-CTK state — run the
   one-shot `rbln-ctk-daemon runtime <runtime> cleanup` to explicitly restore
   the backed-up config and restart the runtime.
+- **Parse containerd `config.toml` with a real TOML parser** instead of
+  substring/regex matching when reading and writing the CDI settings. This
+  makes the CDI-readiness decision (which now gates the runtime restart) correct
+  across comments, whitespace variance, inline vs multi-line `cdi_spec_dirs`
+  arrays, and nested tables. Note: editing the containerd config now normalizes
+  its formatting — all values are preserved, but comments and key ordering in
+  `config.toml` are not (matching nvidia-container-toolkit's handling of the
+  same file). A `config.toml` that is not valid TOML now makes daemon setup
+  fail fast with a clear error instead of best-effort text edits (containerd
+  itself would also refuse such a config). CRI-O and Docker are unaffected
+  (drop-in file and `daemon.json` JSON parsing respectively).
 
 ## v0.2.2
 

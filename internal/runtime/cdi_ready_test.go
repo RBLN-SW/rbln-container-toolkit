@@ -58,7 +58,8 @@ func TestCDIReady_Containerd(t *testing.T) {
 
 	t.Run("2.0+ but explicitly disabled is not ready", func(t *testing.T) {
 		stubVersion(t, "containerd v2.0.0 x", nil)
-		cfg := writeFile(t, t.TempDir(), "config.toml", "[plugins]\n  enable_cdi = false\n")
+		cfg := writeFile(t, t.TempDir(), "config.toml",
+			"[plugins.\"io.containerd.grpc.v1.cri\"]\n    enable_cdi = false\n")
 		ready, err := CDIReady(RuntimeContainerd, cfg, "/")
 		assert.NoError(t, err)
 		assert.False(t, ready)
