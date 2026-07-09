@@ -33,6 +33,15 @@ type Config struct {
 	// Runtime options (not from config file)
 	DriverRoot string `yaml:"-"`
 	SearchRoot string `yaml:"-"` // Prefix for file access (e.g., /host when running in container)
+
+	// DeviceRoot is the filesystem root under which device nodes (/dev/*) are
+	// discovered. Kernel device nodes live in the host's real /dev, never under
+	// the driver install directory, so device discovery must NOT use SearchRoot
+	// (= hostRoot + DriverRoot) — that would look under DriverRoot on
+	// driver-container deployments and miss /dev/rblnfs* etc. DeviceRoot is the
+	// host filesystem root only: "/host" for a containerized daemon, "" or "/"
+	// on bare metal / CLI. Empty is treated as "/".
+	DeviceRoot string `yaml:"-"`
 }
 
 // CDIConfig represents CDI output settings.

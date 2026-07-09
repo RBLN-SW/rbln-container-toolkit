@@ -259,6 +259,11 @@ func generateCDISpec(cdiSpecDir, hostRootMount string) error {
 	if hostRootMount != "" {
 		cfg.DriverRoot = hostRootMount
 	}
+	// Device nodes live in the host's real /dev, so root device discovery at the
+	// host mount (empty means "/"). This is independent of DriverRoot and ensures
+	// the emitted device hostPath is the real /dev path, not one prefixed with
+	// the host mount.
+	cfg.DeviceRoot = hostRootMount
 
 	// Discover RBLN libraries
 	libDisc := discover.NewLibraryDiscoverer(cfg)
@@ -332,7 +337,7 @@ func generateRDSSpec(cfg *config.Config, cdiSpecDir string, gen cdi.Generator) e
 
 	// Shallow-copy the config with the RDS patterns swapped in (discovery forced
 	// on) so the shared device discoverer globs /dev/rblnfs* while keeping the
-	// DriverRoot re-rooting intact.
+	// DeviceRoot (host mount) intact.
 	rdsCfg := *cfg
 	rdsCfg.Devices.Patterns = cfg.RDS.Patterns
 	rdsCfg.Devices.Disabled = false

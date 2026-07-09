@@ -79,31 +79,31 @@ func (d *deviceDiscoverer) Discover() ([]Device, error) {
 	return devices, nil
 }
 
+// getSearchRoot returns the filesystem root under which device nodes are
+// globbed. Devices always live in the host's real /dev, so this is DeviceRoot
+// (the host root: "/host" in a containerized daemon, "/" otherwise) and never
+// the driver install directory. An empty DeviceRoot means the host root "/".
 func (d *deviceDiscoverer) getSearchRoot() string {
-	if d.cfg.SearchRoot != "" {
-		return d.cfg.SearchRoot
+	if d.cfg.DeviceRoot == "" {
+		return "/"
 	}
-	return d.cfg.DriverRoot
+	return d.cfg.DeviceRoot
 }
 
-// toContainerPath converts a host path to the container-visible path.
+// toContainerPath converts a host path to the container-visible path. Device
+// nodes are bound into the container at the same absolute path they occupy on
+// the host (/dev/rblnfs0 -> /dev/rblnfs0), so this is the identity mapping.
+// DriverRoot is deliberately not involved: kernel device nodes never live under
+// the driver install directory.
 func (d *deviceDiscoverer) toContainerPath(hostPath string) string {
-	if d.cfg.DriverRoot == "/" || d.cfg.DriverRoot == "" {
-		return hostPath
-	}
-
-	containerPath := strings.TrimPrefix(hostPath, d.cfg.DriverRoot)
-	if !strings.HasPrefix(containerPath, "/") {
-		containerPath = "/" + containerPath
-	}
-	return containerPath
+	return hostPath
 }
 
-// toHostPath converts a discovered file path to the host-visible path.
-//
-// Case 1: No search root (empty or "/") — path is already absolute on host.
-// Case 2: Path already has DriverRoot prefix — return as-is (SearchRoot == DriverRoot).
-// Case 3: SearchRoot != DriverRoot — strip search root, prepend driver root.
+// toHostPath converts a discovered path back to its real host path by stripping
+// the DeviceRoot prefix. The result is the host-absolute device path (e.g.
+// /dev/rblnfs0) that a container runtime binds into workloads. DriverRoot is
+// deliberately not prepended: device nodes are addressed by their real /dev
+// path on the host regardless of where driver libraries were installed.
 func (d *deviceDiscoverer) toHostPath(path, searchRoot string) string {
 	if searchRoot == "" || searchRoot == "/" {
 		return path
@@ -113,13 +113,5 @@ func (d *deviceDiscoverer) toHostPath(path, searchRoot string) string {
 	if !strings.HasPrefix(stripped, "/") {
 		stripped = "/" + stripped
 	}
-
-	if d.cfg.DriverRoot != "" && d.cfg.DriverRoot != "/" {
-		if strings.HasPrefix(path, d.cfg.DriverRoot) {
-			return path
-		}
-		return filepath.Join(d.cfg.DriverRoot, stripped)
-	}
-
 	return stripped
 }

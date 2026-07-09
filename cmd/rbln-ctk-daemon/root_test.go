@@ -1144,3 +1144,49 @@ func TestIsKubernetesRuntime(t *testing.T) {
 		})
 	}
 }
+
+func TestRegenerateCDISpec_DriverContainerEmitsRDS(t *testing.T) {
+	// Regression: with a driver-container layout the daemon runs
+	// containerized (hostRoot=/host-like temp) and the driver lives under
+	// driverRoot=/run/rbln/driver. The RDS char device is a kernel node in the
+	// host's real /dev, not under driverRoot. Device discovery must root at
+	// hostRoot so /host/dev/rblnfs0 is found and the RDS spec is emitted with the
+	// real host path.
+	hostRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, "dev"), 0o755))
+	f, err := os.Create(filepath.Join(hostRoot, "dev", "rblnfs0"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	cdiDir := filepath.Join(t.TempDir(), "cdi")
+
+	// containerd => Kubernetes path (NPU device emission disabled, RDS still emitted).
+	err = regenerateCDISpec(runtime.RuntimeContainerd, cdiDir, hostRoot, "/run/rbln/driver", "")
+	require.NoError(t, err)
+
+	rds, readErr := os.ReadFile(filepath.Join(cdiDir, "rbln-rds.yaml"))
+	require.NoError(t, readErr, "RDS spec must be generated on driver-container layout")
+	assert.Contains(t, string(rds), "/dev/rblnfs0",
+		"RDS spec must reference the real host device path, not one re-rooted under driverRoot")
+	assert.NotContains(t, string(rds), "/run/rbln/driver/dev/rblnfs0",
+		"device hostPath must not be re-rooted under the driver install dir")
+}
+
+func TestRegenerateCDISpec_HostInstallEmitsRDS(t *testing.T) {
+	// Host-install parity: hostRoot is a containerized mount but driverRoot="/"
+	// (driver pre-installed on host). RDS discovery still finds hostRoot/dev.
+	hostRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, "dev"), 0o755))
+	f, err := os.Create(filepath.Join(hostRoot, "dev", "rblnfs0"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	cdiDir := filepath.Join(t.TempDir(), "cdi")
+
+	err = regenerateCDISpec(runtime.RuntimeContainerd, cdiDir, hostRoot, "/", "")
+	require.NoError(t, err)
+
+	rds, readErr := os.ReadFile(filepath.Join(cdiDir, "rbln-rds.yaml"))
+	require.NoError(t, readErr)
+	assert.Contains(t, string(rds), "/dev/rblnfs0")
+}

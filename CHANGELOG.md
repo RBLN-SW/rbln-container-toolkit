@@ -32,6 +32,18 @@
   fail fast with a clear error instead of best-effort text edits (containerd
   itself would also refuse such a config). CRI-O and Docker are unaffected
   (drop-in file and `daemon.json` JSON parsing respectively).
+- **Fix RDS/NPU device discovery on driver-container deployments.** Device-node
+  discovery globbed under the library search root (host mount + `--driver-root`),
+  but kernel device nodes (`/dev/rblnfs*`, `/dev/rbln*`, `/dev/rsd*`) live in the
+  host's real `/dev`, never under the driver install directory. With a driver
+  container (`--driver-root=/run/rbln/driver`) the RDS glob resolved to
+  `/host/run/rbln/driver/dev/rblnfs*`, found nothing, and `rbln-rds.yaml` was
+  never emitted; host-driver installs worked only because `--driver-root=/` made
+  the paths coincide. Device discovery now roots at the host mount alone,
+  independent of `--driver-root`, so device nodes are found at their real `/dev`
+  path and the emitted CDI `hostPath` is the real `/dev/...` path. Library and
+  tool discovery are unchanged; this also fixes a latent `--driver-root`
+  mis-rooting of device paths in the `rbln-ctk cdi` CLI.
 
 ## v0.2.2
 

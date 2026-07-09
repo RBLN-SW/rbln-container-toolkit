@@ -332,10 +332,18 @@ func regenerateCDISpec(rt runtime.RuntimeType, cdiDir, hostRoot, driverRoot, con
 	cfg := config.LoadDefault()
 	cfg.DriverRoot = driverRoot
 
-	// SearchRoot re-roots host-side file lookups (libraries, tools, devices)
-	// when the daemon runs inside a container — DriverRoot, by contrast,
-	// stays as the path embedded in CDI specs that container runtimes will
-	// consume on the host. The two diverge whenever hostRoot != "/".
+	// Device nodes (/dev/rbln*, /dev/rsd*, /dev/rblnfs*) are kernel-created and
+	// always live in the host's real /dev, never under DriverRoot. Root device
+	// discovery at hostRoot alone so driver-container deployments (DriverRoot=
+	// /run/rbln/driver) still find /host/dev/rblnfs* instead of looking under the
+	// driver install dir. Libraries/tools keep using SearchRoot below.
+	cfg.DeviceRoot = hostRoot
+
+	// SearchRoot re-roots host-side lookups for driver-installed artifacts
+	// (libraries, tools) when the daemon runs inside a container — DriverRoot,
+	// by contrast, stays as the path embedded in CDI specs that container
+	// runtimes will consume on the host. The two diverge whenever hostRoot !=
+	// "/". Device nodes are handled separately via DeviceRoot above.
 	if hostRoot != "/" && hostRoot != "" {
 		cfg.SearchRoot = joinSearchPrefix(hostRoot, driverRoot)
 		log.Printf("DEBUG: Search root set to: %s", cfg.SearchRoot)
