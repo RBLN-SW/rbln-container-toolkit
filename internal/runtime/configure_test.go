@@ -166,6 +166,11 @@ func TestCRIOConfigurator_Configure(t *testing.T) {
 	content, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "[crio.runtime]")
+
+	// And: no .backup is written into crio.conf.d — CRI-O (and the readiness
+	// scanner) would otherwise read it as another live drop-in.
+	_, statErr := os.Stat(configPath + ".backup")
+	assert.True(t, os.IsNotExist(statErr), "Configure must not create a drop-in .backup in crio.conf.d")
 }
 
 func TestCRIOConfigurator_DryRun(t *testing.T) {
@@ -583,6 +588,29 @@ func TestCrioReverter(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = os.Stat(configPath)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestCrioReverter_RemovesStaleBackup(t *testing.T) {
+	// Given: a drop-in plus a stale .backup left by an older CTK version, both
+	// in crio.conf.d.
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "99-rbln.conf")
+	backupPath := configPath + ".backup"
+	require.NoError(t, os.WriteFile(configPath, []byte("[crio.runtime]\n"), 0644))
+	require.NoError(t, os.WriteFile(backupPath, []byte("[crio.runtime]\nenable_cdi = true\n"), 0644))
+
+	reverter, err := NewReverter(RuntimeCRIO, configPath)
+	require.NoError(t, err)
+
+	// When
+	err = reverter.Revert()
+
+	// Then: both the drop-in and the stale backup are gone.
+	assert.NoError(t, err)
+	_, err = os.Stat(configPath)
+	assert.True(t, os.IsNotExist(err))
+	_, err = os.Stat(backupPath)
+	assert.True(t, os.IsNotExist(err), "stale .backup must be removed from crio.conf.d")
 }
 
 func TestDockerReverter_WithBackup(t *testing.T) {

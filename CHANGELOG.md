@@ -14,6 +14,22 @@
   than a bare config-key match, and verifies `cdi_spec_dirs` still covers the
   daemon's spec dir before taking that fast path. A node with CDI initially
   disabled is still restarted once, on the first deploy.
+- **CRI-O: skip the drop-in write and full restart when CDI is already active.**
+  CRI-O has no `enable_cdi` toggle — CDI injection is always on and driven
+  solely by `cdi_spec_dirs`, whose built-in default already includes the
+  daemon's spec dir (`/var/run/cdi`). The daemon previously judged CRI-O
+  readiness by whether its own drop-in existed, so even a node with CDI on by
+  default was reconfigured and fully restarted (`systemctl restart crio`) on
+  first install — briefly disrupting running containers. Readiness is now judged
+  against CRI-O's effective merged configuration (`crio.conf` + `crio.conf.d`,
+  last-writer-wins): a node already scanning `/var/run/cdi` skips both the
+  drop-in and the restart, and the drop-in — which no longer emits the
+  non-existent `enable_cdi` key — is written only when an operator has pointed
+  `cdi_spec_dirs` away from that dir. CRI-O gained CDI support in 1.23.2; older
+  versions cannot inject CDI devices regardless of configuration and are out of
+  scope. The daemon no longer backs up its CRI-O drop-in — the backup landed in
+  `crio.conf.d`, where CRI-O reads it as another live drop-in — and `cleanup`
+  now also removes a stale `99-rbln.conf.backup` left by earlier versions.
 - **Shutdown no longer reverts the runtime config.** On SIGTERM the daemon now
   removes only its CDI spec files; it no longer restores the runtime config
   from `.backup` or restarts the runtime, because reverting would itself

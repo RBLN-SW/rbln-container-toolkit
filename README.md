@@ -261,8 +261,9 @@ docker run --device rebellions.ai/rds=rblnfs0 -it ubuntu:22.04
 
 ```yaml
 # Kubernetes Pod — opt-in via CDI annotation (no device-plugin involvement).
-# Requires containerd 1.7+/CRI-O with CDI enabled (enable_cdi + cdi_spec_dirs
-# pointing at the daemon's --cdi-spec-dir).
+# Requires containerd 1.7+ (enable_cdi + cdi_spec_dirs) or CRI-O 1.23.2+ (CDI on
+# by default; cdi_spec_dirs must include the daemon's --cdi-spec-dir, which the
+# default /var/run/cdi already does). Older CRI-O has no CDI support.
 apiVersion: v1
 kind: Pod
 metadata:

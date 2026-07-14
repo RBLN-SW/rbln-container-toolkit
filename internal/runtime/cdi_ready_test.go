@@ -156,28 +156,98 @@ func TestCDIReady_Containerd(t *testing.T) {
 }
 
 func TestCDIReady_CRIO(t *testing.T) {
-	t.Run("drop-in absent is not ready", func(t *testing.T) {
-		ready, err := CDIReady(RuntimeCRIO, filepath.Join(t.TempDir(), "99-rbln.conf"), "/")
-		assert.NoError(t, err)
-		assert.False(t, ready)
-	})
+	// setupCrio lays out an /etc/crio-style tree: an optional main crio.conf and
+	// a crio.conf.d drop-in dir with the given files, then returns the toolkit
+	// drop-in path the daemon would pass to CDIReady.
+	setupCrio := func(t *testing.T, mainConf string, dropIns map[string]string) string {
+		t.Helper()
+		root := t.TempDir()
+		if mainConf != "" {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "crio.conf"), []byte(mainConf), 0o644))
+		}
+		dir := filepath.Join(root, "crio.conf.d")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		for name, content := range dropIns {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+		}
+		return filepath.Join(dir, "99-rbln.conf")
+	}
+	rblnDropIn := (&crioConfigurator{}).generateConfig()
 
-	t.Run("drop-in with exact content is ready", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := filepath.Join(dir, "99-rbln.conf")
-		want := (&crioConfigurator{configPath: cfg}).generateConfig()
-		require.NoError(t, os.WriteFile(cfg, []byte(want), 0o644))
-
+	t.Run("default node with no cdi_spec_dirs override is ready", func(t *testing.T) {
+		// The core fix: a fresh CRI-O node where nothing overrides cdi_spec_dirs
+		// relies on the built-in default (which includes /var/run/cdi) and must
+		// NOT trigger a drop-in write or a full restart on first install.
+		cfg := setupCrio(t, "", nil)
 		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
 		assert.NoError(t, err)
 		assert.True(t, ready)
 	})
 
-	t.Run("drop-in with different content is not ready", func(t *testing.T) {
-		cfg := writeFile(t, t.TempDir(), "99-rbln.conf", "[crio.runtime]\n# stale\n")
+	t.Run("main crio.conf without cdi_spec_dirs is ready", func(t *testing.T) {
+		cfg := setupCrio(t, "[crio.runtime]\ndefault_runtime = \"runc\"\n", nil)
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.True(t, ready)
+	})
+
+	t.Run("main crio.conf already listing /var/run/cdi is ready without our drop-in", func(t *testing.T) {
+		cfg := setupCrio(t, "[crio.runtime]\ncdi_spec_dirs = [\"/etc/cdi\", \"/var/run/cdi\"]\n", nil)
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.True(t, ready)
+	})
+
+	t.Run("cdi_spec_dirs excluding /var/run/cdi is not ready", func(t *testing.T) {
+		cfg := setupCrio(t, "[crio.runtime]\ncdi_spec_dirs = [\"/etc/cdi\"]\n", nil)
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.False(t, ready, "a config that omits /var/run/cdi must still be configured + restarted")
+	})
+
+	t.Run("our drop-in restores coverage over an excluding main config", func(t *testing.T) {
+		// crio.conf drops /var/run/cdi, but the toolkit's higher-precedence
+		// drop-in adds it back → effective config scans it → ready (idempotent
+		// re-deploy skips the restart).
+		cfg := setupCrio(t, "[crio.runtime]\ncdi_spec_dirs = [\"/etc/cdi\"]\n", map[string]string{
+			"99-rbln.conf": rblnDropIn,
+		})
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.True(t, ready)
+	})
+
+	t.Run("lower-precedence drop-in excluding /var/run/cdi is overridden by ours", func(t *testing.T) {
+		cfg := setupCrio(t, "", map[string]string{
+			"10-operator.conf": "[crio.runtime]\ncdi_spec_dirs = [\"/etc/cdi\"]\n",
+			"99-rbln.conf":     rblnDropIn,
+		})
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.True(t, ready)
+	})
+
+	t.Run("higher-precedence drop-in excluding /var/run/cdi is not ready", func(t *testing.T) {
+		// An operator drop-in sorted after ours strips /var/run/cdi again;
+		// last-writer-wins means the node is genuinely not scanning our dir.
+		cfg := setupCrio(t, "", map[string]string{
+			"99-rbln.conf":     rblnDropIn,
+			"zz-operator.conf": "[crio.runtime]\ncdi_spec_dirs = [\"/etc/cdi\"]\n",
+		})
 		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
 		assert.NoError(t, err)
 		assert.False(t, ready)
+	})
+
+	t.Run("unparseable drop-in is skipped and default coverage stands", func(t *testing.T) {
+		// A running CRI-O would have rejected an invalid drop-in, so a file we
+		// cannot parse must not spuriously force a restart.
+		cfg := setupCrio(t, "", map[string]string{
+			"garbage.conf": "this is not = valid = toml [[[",
+		})
+		ready, err := CDIReady(RuntimeCRIO, cfg, "/")
+		assert.NoError(t, err)
+		assert.True(t, ready)
 	})
 }
 

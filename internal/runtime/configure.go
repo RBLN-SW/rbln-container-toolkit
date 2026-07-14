@@ -259,10 +259,12 @@ type crioConfigurator struct {
 }
 
 func (c *crioConfigurator) Configure() error {
-	// Backup existing config
-	if err := backupFile(c.configPath); err != nil {
-		return fmt.Errorf("backup config: %v", err)
-	}
+	// No backup here, unlike containerd/docker. CTK owns a dedicated drop-in
+	// (99-rbln.conf) that cleanup fully reverts by removing it — there is no
+	// operator content to preserve. Crucially, the drop-in lives in
+	// /etc/crio/crio.conf.d, which CRI-O reads in full regardless of extension;
+	// a <drop-in>.backup written there would be parsed by CRI-O (and by the
+	// readiness scanner) as a live, higher-precedence drop-in.
 
 	// Generate config content
 	content := c.generateConfig()
@@ -286,14 +288,15 @@ func (c *crioConfigurator) DryRun() (string, error) {
 }
 
 func (c *crioConfigurator) generateConfig() string {
-	return `# RBLN Container Toolkit CRI-O Configuration
-# This file enables CDI support for Rebellions NPU
+	return `# RBLN Container Toolkit CRI-O configuration drop-in.
+#
+# CRI-O has no enable_cdi toggle: CDI injection is always on and is driven
+# solely by cdi_spec_dirs. This drop-in only ensures /var/run/cdi (where the
+# toolkit writes RBLN CDI specs) is scanned. On a default CRI-O node that dir is
+# already a default spec dir, so this file is written only when the effective
+# configuration does not already cover it.
 
 [crio.runtime]
-# Enable CDI (Container Device Interface) support
-enable_cdi = true
-
-# CDI specification directories
 cdi_spec_dirs = [
     "/etc/cdi",
     "/var/run/cdi"
@@ -384,13 +387,18 @@ func (c *dockerConfigurator) enableCDI(config map[string]interface{}) {
 // change required — i.e. whether the daemon can skip Configure() and, crucially,
 // the runtime restart that follows it.
 //
-// It is deliberately NOT a plain grep for a config key. The decision reflects
-// runtime version defaults: containerd 2.0+ and Docker 28.2.0+ enable CDI by
-// default with the standard spec dirs, so their config may legitimately omit
-// the key while still being ready. hostRoot locates the runtime binary for that
-// version probe (see DetectVersion). When the version can't be determined the
-// check falls back to config-content equivalence: ready iff running Configure()
-// would leave the file byte-for-byte unchanged.
+// It is deliberately NOT a plain grep for a config key; each runtime is judged
+// structurally:
+//   - containerd / docker: version defaults gate the decision (containerd 2.0+
+//     and Docker 28.2.0+ enable CDI by default with the standard spec dirs, so
+//     their config may legitimately omit the key while still being ready), and
+//     the parsed config is additionally checked for an explicit disable and for
+//     coverage of the daemon's spec dir. hostRoot locates the runtime binary
+//     for that version probe (see DetectVersion).
+//   - CRI-O: has no enable_cdi toggle (CDI is always on, driven solely by
+//     cdi_spec_dirs), so readiness is simply whether the effective merged config
+//     (crio.conf + crio.conf.d) already scans the daemon's spec dir. No version
+//     probe is performed and hostRoot is unused for CRI-O.
 //
 // configPath must be the effective path the configurator would write (already
 // host-root-prefixed by the caller).
@@ -446,19 +454,16 @@ func containerdCDIReady(configPath, hostRoot string) (bool, error) {
 	return false, nil
 }
 
-// crioCDIReady reports readiness for CRI-O. CTK owns a dedicated drop-in file,
-// so readiness is simply whether that drop-in already exists with exactly the
-// content Configure() would write.
+// crioCDIReady reports readiness for CRI-O. CRI-O has no enable_cdi toggle — CDI
+// injection is always on and is driven solely by cdi_spec_dirs (built-in
+// default: /etc/cdi, /var/run/cdi). So the node is ready whenever its effective
+// configuration already scans the dir the toolkit writes specs into, judged
+// against the actual merged config (crio.conf + crio.conf.d) rather than the
+// mere presence of our drop-in. This is what lets a default CRI-O node — where
+// /var/run/cdi is already a default spec dir — skip the drop-in write and the
+// disruptive full restart entirely, even on first install.
 func crioCDIReady(configPath string) (bool, error) {
-	data, err := os.ReadFile(configPath)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read config %s: %w", configPath, err)
-	}
-	want := (&crioConfigurator{configPath: configPath}).generateConfig()
-	return string(data) == want, nil
+	return crioScansSpecDir(configPath)
 }
 
 // dockerCDIReady reports readiness for Docker. Docker 28.2.0+ enables CDI by
@@ -585,12 +590,18 @@ type crioReverter struct {
 }
 
 func (r *crioReverter) Revert() error {
-	// For CRI-O, just remove the drop-in config file
-	err := os.Remove(r.configPath)
-	if os.IsNotExist(err) {
-		return nil // Already removed
+	// Removing the drop-in fully reverts CTK's CRI-O changes — it is the only
+	// file CTK adds.
+	if err := os.Remove(r.configPath); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	return err
+	// Also clear a stale <drop-in>.backup left in crio.conf.d by older CTK
+	// versions. CRI-O reads it as a live drop-in, so leaving it behind would
+	// keep an orphaned config file this reverter is meant to clear.
+	if err := os.Remove(r.configPath + ".backup"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // dockerReverter reverts Docker configuration.
