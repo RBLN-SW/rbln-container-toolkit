@@ -1,5 +1,22 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.4
+
+- **Key the CDI auto-refresh watcher on each RBLN library's build-id instead of
+  its embedded `rbln version:` marker.** On CRI-O/RHEL the driver RPM's
+  `brp-strip-comment-note` pass strips the ELF `.comment` section that carried
+  the marker, so the watcher saw a permanently empty snapshot, logged `rbln
+  version marker not found` every tick, and never auto-regenerated the CDI spec
+  on a driver upgrade (already-shipped driver images cannot be rebuilt, so the
+  watcher has to tolerate marker-less libraries). The watcher now fingerprints
+  each `librbln-ccl`/`librbln-thunk` by its GNU build-id — which survives
+  stripping — falling back to a size+mtime digest for non-ELF or build-id-less
+  libraries, and no longer treats a missing marker as an error, so the per-tick
+  warning spam is gone and the baseline is no longer `<none>`. Only ELF section
+  headers and the small note are read, never the whole library; a compressed or
+  implausibly large build-id note is refused and falls back rather than being
+  decompressed on every tick.
+
 ## v0.2.3
 
 - **Stop the daemon from restarting the container runtime on every DaemonSet
