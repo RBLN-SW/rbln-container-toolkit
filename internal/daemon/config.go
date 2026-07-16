@@ -99,11 +99,11 @@ type Config struct {
 	// Force terminates existing daemon instance before starting.
 	Force bool
 
-	// RefreshInterval is the polling interval for the UMD version watcher.
+	// RefreshInterval is the polling interval for the UMD library watcher.
 	// Zero disables the watcher entirely; negative values are rejected by
 	// Validate. The watcher discovers librbln-*.so files in the standard
-	// library directories and detects driver upgrades by re-reading the
-	// embedded `rbln version:` string in each one.
+	// library directories and detects driver upgrades by fingerprinting each
+	// one (GNU build-id, falling back to size+mtime).
 	RefreshInterval time.Duration
 }
 

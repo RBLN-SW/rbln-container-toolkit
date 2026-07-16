@@ -238,9 +238,9 @@ func isKubernetesRuntime(rt runtime.RuntimeType) bool {
 	return rt == runtime.RuntimeContainerd || rt == runtime.RuntimeCRIO
 }
 
-// buildRefreshWatcher constructs the UMD version watcher whose callback
-// regenerates the CDI spec when a driver upgrade changes the embedded
-// `rbln version:` string of any installed librbln-*.so. Returns nil if the
+// buildRefreshWatcher constructs the UMD library watcher whose callback
+// regenerates the CDI spec when a driver upgrade changes the fingerprint
+// (build-id or size+mtime) of any installed librbln-*.so. Returns nil if the
 // watcher is disabled (RefreshInterval <= 0). The watcher rediscovers
 // libraries on each tick by globbing the standard library directories, so
 // new .so files appearing after startup are picked up automatically.

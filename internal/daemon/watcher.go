@@ -26,11 +26,12 @@ import (
 	"time"
 )
 
-// VersionProber returns a snapshot of UMD library path -> embedded RBLN
-// version, alongside per-path parse errors. The prober is responsible for
-// both discovering which libraries currently exist on the host and reading
-// their versions, so the watcher does not need to know how libraries are
-// laid out.
+// VersionProber returns a snapshot of UMD library path -> an opaque
+// change-detection fingerprint (a build-id or size+mtime digest that flips
+// when the library is replaced), alongside per-path errors. The prober is
+// responsible for both discovering which libraries currently exist on the
+// host and fingerprinting them, so the watcher does not need to know how
+// libraries are laid out; it only diffs the returned map between ticks.
 type VersionProber func() (versions map[string]string, errs map[string]error)
 
 // RefreshTrigger is the payload passed to a RefreshCallback when the watcher
@@ -73,10 +74,11 @@ type WatcherOptions struct {
 	StatusHook func(WatcherStatus)
 }
 
-// Watcher periodically takes a UMD library version snapshot and invokes a
+// Watcher periodically takes a UMD library fingerprint snapshot and invokes a
 // callback when the snapshot changes between ticks. Driver upgrades on the
-// host change the embedded `rbln version:` string in librbln-*.so files;
-// that string is what the watcher keys on.
+// host replace the librbln-*.so files; the per-library fingerprint (a build-id
+// or size+mtime digest) flips when that happens, and that flip is what the
+// watcher keys on.
 type Watcher struct {
 	interval   time.Duration
 	probe      VersionProber
