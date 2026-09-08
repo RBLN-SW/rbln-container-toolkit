@@ -85,7 +85,7 @@ spec:
           env:
             - name: RBLN_CTK_DAEMON_HOST_ROOT
               value: "/host"
-            - name: RBLN_CTK_DAEMON_CDI_DIR
+            - name: RBLN_CTK_DAEMON_CDI_SPEC_DIR
               value: "/var/run/cdi"
             - name: RBLN_CTK_DAEMON_HEALTH_PORT
               value: "8080"
