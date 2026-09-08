@@ -17,6 +17,15 @@
   is documented in the README selector table: a container can hold NPUs from
   only one RSD group. The Kubernetes path is unaffected — the device-plugin
   owns device injection there.
+- **Rewrite commit messages when mirroring to the public repository.**
+  `hack/release-mirror.sh` now strips internal tracker IDs, the `(#NN)`
+  pull-request numbers GitHub appends on squash merge, and AI co-author
+  trailers from every commit message before force-pushing to
+  `RBLN-SW/rbln-container-toolkit`, and re-points every stable tag at the
+  rewritten commits. Public commit SHAs therefore differ from the internal
+  ones from this release on, and the first publish rewrites the existing
+  public history once — an existing clone of the public repo needs
+  `git fetch && git reset --hard origin/main` to follow.
 
 ## v0.2.4
 

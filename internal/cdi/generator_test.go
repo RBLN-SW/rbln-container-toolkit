@@ -1491,7 +1491,7 @@ func TestGenerator_Generate_MultiGroup_RSDAliasedToRsd0(t *testing.T) {
 	// leaves NPUs 0-3 in group 0 (/dev/rsd0) and NPUs 4-7 in group 1
 	// (/dev/rsd1). The UMD only ever opens /dev/rsd0, so a container that
 	// received /dev/rsd1 under its own name failed with `Device 0 is not a
-	// valid NPU device` (DOLIN-4371). CTK 0.1.x users renamed the node by hand
+	// valid NPU device`. CTK 0.1.x users renamed the node by hand
 	// with `--device /dev/rsd1:/dev/rsd0`; the per-NPU entry must do that now.
 	result := &discover.DiscoveryResult{
 		Devices: []discover.Device{
