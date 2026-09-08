@@ -1,5 +1,23 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.5
+
+- **Expose the RSD group device as `/dev/rsd0` inside the container for
+  per-NPU and per-RSD CDI entries.** After `rbln-smi group -c 1 -a 4,5,6,7`, a
+  container started with `--device rebellions.ai/npu=4` received the group's
+  `/dev/rsd1` under its host name and failed with `ValueError: Device 0 is not
+  a valid NPU device`, because the UMD opens `/dev/rsd0` at a fixed path rather
+  than enumerating `/dev/rsd*`. v0.1.x users renamed the node by hand with
+  `--device /dev/rsd1:/dev/rsd0`; v0.2.0 started attaching the group device
+  automatically but kept the identity mapping, so only group 0 worked. The
+  per-NPU (`npu=N`) and per-RSD (`npu=rsdM`) entries now keep the real host
+  path (`/dev/rsdM`) while exposing it at `/dev/rsd0` in the container. The
+  `all`/`runtime` umbrella entries keep identity paths, since a multi-group
+  host would otherwise map several groups onto the same node. One consequence
+  is documented in the README selector table: a container can hold NPUs from
+  only one RSD group. The Kubernetes path is unaffected — the device-plugin
+  owns device injection there.
+
 ## v0.2.4
 
 - **Key the CDI auto-refresh watcher on each RBLN library's build-id instead of

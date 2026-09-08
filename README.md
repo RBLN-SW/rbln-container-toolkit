@@ -208,10 +208,16 @@ Each generated spec exposes one CDI entry per NPU plus a few group handles:
 
 | Entry | What gets mounted |
 |---|---|
-| `rebellions.ai/npu=N` | `/dev/rblnN` plus the RSD group device (`/dev/rsdM`) the NPU is assigned to. Auto-attachment requires the `with_rblnml` build (links against `librbln-ml`); the default pure-Go build leaves the entry NPU-only and logs a warning at spec generation so operators can add `--device rebellions.ai/npu=rsdM` explicitly or rebuild with the tag. |
-| `rebellions.ai/npu=rsdM` | `/dev/rsdM` — for explicit group selection (custom-group setups, debugging, or as a workaround in the pure-Go build). |
-| `rebellions.ai/npu=all` | Every discovered `/dev/rbln*` and `/dev/rsd*`. Use this when you want to expose the whole host. |
+| `rebellions.ai/npu=N` | `/dev/rblnN` plus the RSD group device the NPU is assigned to. The host's `/dev/rsdM` is exposed inside the container as **`/dev/rsd0`** regardless of `M`, because the UMD only ever opens `/dev/rsd0`. Auto-attachment requires the `with_rblnml` build (links against `librbln-ml`); the default pure-Go build leaves the entry NPU-only and logs a warning at spec generation so operators can add `--device rebellions.ai/npu=rsdM` explicitly or rebuild with the tag. |
+| `rebellions.ai/npu=rsdM` | Host `/dev/rsdM`, exposed inside the container as `/dev/rsd0` — for explicit group selection (custom-group setups, debugging, or as a workaround in the pure-Go build). |
+| `rebellions.ai/npu=all` | Every discovered `/dev/rbln*` and `/dev/rsd*`, each under its own host name (no `/dev/rsd0` renaming — two groups would collide). Use this when you want to expose the whole host. |
 | `rebellions.ai/npu=runtime` | v0.1.x compatibility alias of `=all` (identical content). Prefer `=all` for new manifests. |
+
+> **One RSD group per container.** Because every group device is renamed to
+> `/dev/rsd0`, a container may only hold NPUs from a single RSD group. Selecting
+> NPUs from two groups (e.g. `npu=0` and `npu=4` after `rbln-smi group -c 1 -a
+> 4,5,6,7`) makes both entries claim `/dev/rsd0` and only one wins. Run one
+> container per group, or use `npu=all` when you really need the whole host.
 
 ```bash
 # Docker — single NPU
@@ -219,6 +225,13 @@ docker run --device rebellions.ai/npu=0 -it ubuntu:22.04
 
 # Docker — multi NPU
 docker run --device rebellions.ai/npu=0 --device rebellions.ai/npu=1 \
+  -it ubuntu:22.04
+
+# Docker — NPUs from a second RSD group (`rbln-smi group -c 1 -a 4,5,6,7`).
+# The group's /dev/rsd1 shows up as /dev/rsd0 inside the container; no extra
+# `--device /dev/rsd1:/dev/rsd0` flag is needed.
+docker run --device rebellions.ai/npu=4 --device rebellions.ai/npu=5 \
+  --device rebellions.ai/npu=6 --device rebellions.ai/npu=7 \
   -it ubuntu:22.04
 
 # Docker — all NPUs (`npu=runtime` still works as a v0.1.x compat alias)

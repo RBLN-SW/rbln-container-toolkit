@@ -1390,10 +1390,12 @@ func TestGenerator_Generate_WithDevices_PerNPUEntries(t *testing.T) {
 	require.Len(t, npu1.ContainerEdits.DeviceNodes, 1)
 	assert.Equal(t, "/dev/rbln1", npu1.ContainerEdits.DeviceNodes[0].Path)
 
-	// Per-RSD entry exposes the group device by its driver basename.
+	// Per-RSD entry for group 0 maps onto itself: the UMD path /dev/rsd0 and
+	// the host node coincide.
 	rsd0 := findDevice(t, spec, "rsd0")
 	require.Len(t, rsd0.ContainerEdits.DeviceNodes, 1)
 	assert.Equal(t, "/dev/rsd0", rsd0.ContainerEdits.DeviceNodes[0].Path)
+	assert.Equal(t, "/dev/rsd0", rsd0.ContainerEdits.DeviceNodes[0].HostPath)
 
 	// "all" entry mirrors the full device set, and the "runtime" alias
 	// carries the same nodes for v0.1.x consumers.
@@ -1423,11 +1425,15 @@ func TestGenerator_Generate_ResolverAttachesRSDPerNPU(t *testing.T) {
 	// When
 	spec, err := gen.Generate(result)
 
-	// Then: each per-NPU entry carries its rbln node AND the resolved
-	// /dev/rsdM, so `--device rebellions.ai/npu=0` is functional on its own.
+	// Then: each per-NPU entry carries its rbln node AND the resolved host
+	// /dev/rsdM — exposed inside the container as /dev/rsd0, the fixed path
+	// the UMD opens — so `--device rebellions.ai/npu=0` is functional on its
+	// own even when the NPU belongs to a group other than 0.
 	require.NoError(t, err)
-	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0", "/dev/rsd1")
-	assertDevicePaths(t, findDevice(t, spec, "1"), "/dev/rbln1", "/dev/rsd2")
+	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0", "/dev/rsd0")
+	assertDevicePaths(t, findDevice(t, spec, "1"), "/dev/rbln1", "/dev/rsd0")
+	assertDeviceHostPaths(t, findDevice(t, spec, "0"), "/dev/rbln0", "/dev/rsd1")
+	assertDeviceHostPaths(t, findDevice(t, spec, "1"), "/dev/rbln1", "/dev/rsd2")
 
 	// Top-level is RSD-free now — the resolver handles attachment.
 	assert.Empty(t, spec.ContainerEdits.DeviceNodes,
@@ -1480,6 +1486,112 @@ func TestGenerator_Generate_ResolverPointsToMissingRSD_NpuOnly(t *testing.T) {
 	assertDevicePaths(t, findDevice(t, spec, "0"), "/dev/rbln0")
 }
 
+func TestGenerator_Generate_MultiGroup_RSDAliasedToRsd0(t *testing.T) {
+	// Given: the documented multi-RSD layout — `rbln-smi group -c 1 -a 4,5,6,7`
+	// leaves NPUs 0-3 in group 0 (/dev/rsd0) and NPUs 4-7 in group 1
+	// (/dev/rsd1). The UMD only ever opens /dev/rsd0, so a container that
+	// received /dev/rsd1 under its own name failed with `Device 0 is not a
+	// valid NPU device` (DOLIN-4371). CTK 0.1.x users renamed the node by hand
+	// with `--device /dev/rsd1:/dev/rsd0`; the per-NPU entry must do that now.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln0", ContainerPath: "/dev/rbln0"},
+			{Path: "/dev/rbln4", ContainerPath: "/dev/rbln4"},
+			{Path: "/dev/rsd0", ContainerPath: "/dev/rsd0"},
+			{Path: "/dev/rsd1", ContainerPath: "/dev/rsd1"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	resolver := &fakeResolver{mapping: map[uint32]uint32{0: 0, 4: 1}}
+	gen := NewGenerator(cfg, resolver)
+
+	// When
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+
+	// Then: group 0 is unchanged (identity), group 1 is renamed to /dev/rsd0
+	// inside the container while the host path still points at /dev/rsd1 so
+	// the runtime stats the right node for major/minor and the cgroup rule.
+	npu0 := findDevice(t, spec, "0")
+	assertDevicePaths(t, npu0, "/dev/rbln0", "/dev/rsd0")
+	assertDeviceHostPaths(t, npu0, "/dev/rbln0", "/dev/rsd0")
+
+	npu4 := findDevice(t, spec, "4")
+	assertDevicePaths(t, npu4, "/dev/rbln4", "/dev/rsd0")
+	assertDeviceHostPaths(t, npu4, "/dev/rbln4", "/dev/rsd1")
+	assert.Equal(t, "rw", npu4.ContainerEdits.DeviceNodes[1].Permissions)
+
+	// Explicit per-RSD selection (`--device rebellions.ai/npu=rsd1`) gets the
+	// same alias — it exists precisely as the manual fallback for the pure-Go
+	// build, so it must be usable without a second `--device /dev/rsd1:/dev/rsd0`.
+	rsd1 := findDevice(t, spec, "rsd1")
+	assertDevicePaths(t, rsd1, "/dev/rsd0")
+	assertDeviceHostPaths(t, rsd1, "/dev/rsd1")
+
+	// `all` (and its `runtime` alias) keep identity paths: aliasing both
+	// groups onto /dev/rsd0 in one entry would make them collide.
+	for _, name := range []string{"all", "runtime"} {
+		umbrella := findDevice(t, spec, name)
+		assertDevicePaths(t, umbrella, "/dev/rbln0", "/dev/rbln4", "/dev/rsd0", "/dev/rsd1")
+		assertDeviceHostPaths(t, umbrella, "/dev/rbln0", "/dev/rbln4", "/dev/rsd0", "/dev/rsd1")
+	}
+}
+
+func TestGenerator_Generate_RSDAlias_KeepsDeviceRootHostPath(t *testing.T) {
+	// Given: device discovery rooted at a host mount (daemon-in-container
+	// path). The alias must rewrite only the container-side path and leave the
+	// re-rooted host path untouched, or the runtime would stat a non-existent
+	// node.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/host/dev/rbln4", ContainerPath: "/dev/rbln4"},
+			{Path: "/host/dev/rsd1", ContainerPath: "/dev/rsd1"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	cfg.DeviceRoot = "/host"
+	gen := NewGenerator(cfg, &fakeResolver{mapping: map[uint32]uint32{4: 1}})
+
+	// When
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+
+	// Then
+	npu4 := findDevice(t, spec, "4")
+	assertDevicePaths(t, npu4, "/dev/rbln4", "/dev/rsd0")
+	assertDeviceHostPaths(t, npu4, "/host/dev/rbln4", "/host/dev/rsd1")
+
+	rsd1 := findDevice(t, spec, "rsd1")
+	assertDevicePaths(t, rsd1, "/dev/rsd0")
+	assertDeviceHostPaths(t, rsd1, "/host/dev/rsd1")
+}
+
+func TestGenerator_Generate_RSDAlias_YAMLOutput(t *testing.T) {
+	// Given: an NPU in group 1. The YAML consumed by Docker/containerd must
+	// show the renamed container path next to the real host path — this is
+	// what operators inspect with `rbln-ctk cdi generate` when debugging.
+	result := &discover.DiscoveryResult{
+		Devices: []discover.Device{
+			{Path: "/dev/rbln4", ContainerPath: "/dev/rbln4"},
+			{Path: "/dev/rsd1", ContainerPath: "/dev/rsd1"},
+		},
+	}
+	cfg := config.DefaultConfig()
+	gen := NewGenerator(cfg, &fakeResolver{mapping: map[uint32]uint32{4: 1}})
+	writer := NewWriter()
+
+	// When
+	spec, err := gen.Generate(result)
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, writer.WriteToWriter(spec, &buf, "yaml"))
+
+	// Then
+	output := buf.String()
+	assert.Contains(t, output, "path: /dev/rsd0\n")
+	assert.Contains(t, output, "hostPath: /dev/rsd1\n")
+}
+
 // fakeResolver is the test double used to exercise resolver-driven mapping
 // without bringing librbln-ml into unit tests. Each entry is "NPU index → RSD
 // group index"; unmapped NPUs trigger ok=false, matching production behavior
@@ -1507,6 +1619,18 @@ func assertDevicePaths(t *testing.T, dev specs.Device, paths ...string) {
 		got = append(got, n.Path)
 	}
 	assert.Equal(t, paths, got, "device %q nodes", dev.Name)
+}
+
+// assertDeviceHostPaths is the HostPath counterpart of assertDevicePaths.
+// RSD alias tests need both: the container path is what the UMD opens, the
+// host path is what the runtime stats for major/minor and the cgroup rule.
+func assertDeviceHostPaths(t *testing.T, dev specs.Device, hostPaths ...string) {
+	t.Helper()
+	got := make([]string, 0, len(dev.ContainerEdits.DeviceNodes))
+	for _, n := range dev.ContainerEdits.DeviceNodes {
+		got = append(got, n.HostPath)
+	}
+	assert.Equal(t, hostPaths, got, "device %q host nodes", dev.Name)
 }
 
 func TestGenerator_Generate_WithDevices_DriverRoot(t *testing.T) {

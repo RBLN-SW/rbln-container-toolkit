@@ -85,6 +85,16 @@ const LegacyRuntimeDeviceName = "runtime"
 // (e.g., "rsd0", "rsd1"). Per-NPU entries use the bare numeric index ("0", "1").
 const rsdEntryPrefix = "rsd"
 
+// rsdContainerPath is the fixed path at which the UMD looks up the RSD group
+// management device inside a container. The UMD does not enumerate
+// `/dev/rsd*`; it opens `/dev/rsd0` and fails with `Device N is not a valid
+// NPU device` when that node is absent. Per-NPU and per-RSD entries therefore
+// expose whichever host `/dev/rsd{GroupID}` they attach under this container
+// path (CTK 0.1.x users did the same by hand with
+// `--device /dev/rsdM:/dev/rsd0`). The `all`/`runtime` umbrella entries keep
+// identity paths because two groups would otherwise collide on this node.
+const rsdContainerPath = "/dev/rsd0"
+
 // rblnfsEntryPrefix is the entry-name prefix for RDS char device selection
 // (e.g., "rblnfs0", "rblnfs1"). The RDS class uses the full basename as the
 // entry name — matching the documented `--device rebellions.ai/rds=rblnfs0`
@@ -100,11 +110,14 @@ const rblnfsEntryPrefix = "rblnfs"
 //     resolver so users picking `--device rebellions.ai/npu=N` automatically
 //     receive the correct group device without listing it themselves.
 //   - per-NPU entries named "0", "1", ... each carrying `/dev/rbln{N}` plus
-//     the resolved `/dev/rsd{GroupID}` when the resolver knows the mapping.
+//     the resolved host `/dev/rsd{GroupID}` when the resolver knows the
+//     mapping, exposed inside the container as `/dev/rsd0` (rsdContainerPath)
+//     because that is the only path the UMD consults.
 //   - per-RSD entries named "rsd0", "rsd1", ... for explicit group selection
 //     (kept for debugging / custom-group workflows where the user wants to
-//     bypass the auto-mapping).
-//   - "all" entry: every discovered NPU + RSD node.
+//     bypass the auto-mapping). Also exposed as `/dev/rsd0` in the container.
+//   - "all" entry: every discovered NPU + RSD node with identity paths (a
+//     multi-group host would otherwise map several groups onto `/dev/rsd0`).
 //   - "runtime" entry: v0.1.x compatibility alias of "all" (identical content)
 //     so existing manifests using `rebellions.ai/npu=runtime` keep matching.
 //
@@ -320,7 +333,12 @@ func (g *generator) classifyDevices(result *discover.DiscoveryResult) (rbln, rsd
 // buildDeviceEntries produces the per-NPU, per-RSD, and "all" CDI device
 // entries. Each per-NPU entry carries the bare `/dev/rbln{N}` plus — when the
 // resolver supplies a mapping — the `/dev/rsd{GroupID}` assigned to that NPU,
-// so `docker run --device rebellions.ai/npu=N` is functional on its own.
+// so `docker run --device rebellions.ai/npu=N` is functional on its own. The
+// group device is exposed at rsdContainerPath (`/dev/rsd0`) regardless of its
+// host index, since the UMD only ever opens that path; the same aliasing
+// applies to the explicit per-RSD entries. Selecting NPUs from two different
+// groups in one container therefore collapses onto a single `/dev/rsd0` —
+// one container can hold one RSD group.
 // Always emits "all" as the named handle for library/tool injection even when
 // no device nodes are present (K8s path).
 func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []specs.Device {
@@ -337,7 +355,7 @@ func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []sp
 			DeviceNodes: []*specs.DeviceNode{&npuNode},
 		}
 		if rsdDev, ok := g.resolveRSDFor(dev, rsdByIndex); ok {
-			rsdNode := g.createDeviceNode(rsdDev)
+			rsdNode := g.createRSDAliasNode(rsdDev)
 			edits.DeviceNodes = append(edits.DeviceNodes, &rsdNode)
 		}
 		devices = append(devices, specs.Device{
@@ -347,7 +365,7 @@ func (g *generator) buildDeviceEntries(rblnDevs, rsdDevs []discover.Device) []sp
 	}
 
 	for _, dev := range rsdDevs {
-		node := g.createDeviceNode(dev)
+		node := g.createRSDAliasNode(dev)
 		devices = append(devices, specs.Device{
 			Name: rsdEntryPrefix + deviceIndex(dev),
 			ContainerEdits: specs.ContainerEdits{
@@ -489,6 +507,17 @@ func (g *generator) createDeviceNode(dev discover.Device) specs.DeviceNode {
 		HostPath:    dev.Path,
 		Permissions: "rw",
 	}
+}
+
+// createRSDAliasNode creates a CDI device node for an RSD group device that
+// keeps the discovered host path but is exposed inside the container at
+// rsdContainerPath (`/dev/rsd0`), the fixed path the UMD opens. Group 0 maps
+// onto itself; every other group is renamed, which is what makes
+// `--device rebellions.ai/npu=N` work for NPUs outside the first group.
+func (g *generator) createRSDAliasNode(dev discover.Device) specs.DeviceNode {
+	node := g.createDeviceNode(dev)
+	node.Path = rsdContainerPath
+	return node
 }
 
 // createLibraryMount creates a bind mount for a library using its ContainerPath.
