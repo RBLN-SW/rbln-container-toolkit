@@ -437,7 +437,7 @@ const (
 	deviceClassUnknown deviceClass = iota
 	deviceClassRBLN
 	deviceClassRSD
-	// deviceClassRBLNFS is the RDS (Rebellions Datastore) char device
+	// deviceClassRBLNFS is the RDS (Rebellions Direct Storage) char device
 	// /dev/rblnfs*, injected via the separate rebellions.ai/rds CDI class.
 	deviceClassRBLNFS
 )

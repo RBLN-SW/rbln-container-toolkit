@@ -26,7 +26,7 @@ cdi:
   #                        rebellions.ai/npu=all  (every discovered device)
   class: npu
 
-# RDS (Rebellions Datastore) char device settings
+# RDS (Rebellions Direct Storage) char device settings
 #
 # /dev/rblnfsN is injected through a separate, opt-in CDI class
 # (rebellions.ai/rds) written to its own spec file. It is kept out of the NPU

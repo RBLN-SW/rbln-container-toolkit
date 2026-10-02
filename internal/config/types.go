@@ -59,7 +59,8 @@ type CDIConfig struct {
 }
 
 // RDSConfig represents the separate CDI device class used to inject the RDS
-// (Rebellions Datastore) char device /dev/rblnfs* into opt-in containers.
+// (Rebellions Direct Storage) char device /dev/rblnfs* into opt-in
+// containers.
 //
 // RDS uses its own CDI class (rebellions.ai/rds) and its own spec file,
 // independent of the NPU class, so injection is opt-in: a container only

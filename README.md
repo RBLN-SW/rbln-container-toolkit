@@ -253,9 +253,9 @@ spec:
 
 #### RDS char device (`/dev/rblnfs`)
 
-The RDS (Rebellions Datastore) char device `/dev/rblnfsN` is injected through a
-**separate, opt-in CDI class** — `rebellions.ai/rds` — written to its own spec
-file (`/var/run/cdi/rbln-rds.yaml`). It is deliberately kept out of the
+The RDS (Rebellions Direct Storage) char device `/dev/rblnfsN` is injected
+through a **separate, opt-in CDI class** — `rebellions.ai/rds` — written to its
+own spec file (`/var/run/cdi/rbln-rds.yaml`). It is deliberately kept out of the
 `rebellions.ai/npu` class so the NPU `=all` selection never carries it, and it is
 emitted **independently of the Kubernetes device-node gate**: because the device
 is only injected into containers that explicitly reference it, it never masks
