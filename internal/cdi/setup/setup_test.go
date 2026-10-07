@@ -55,13 +55,15 @@ func (m *mockLogger) Debug(msg string, args ...interface{}) {
 
 // mockLibraryDiscoverer implements discover.LibraryDiscoverer for testing.
 type mockLibraryDiscoverer struct {
-	rblnLibs   []discover.Library
-	rblnErr    error
-	depsLibs   []discover.Library
-	depsErr    error
-	pluginLibs []discover.Library
-	pluginErr  error
-	callOrder  []string
+	rblnLibs    []discover.Library
+	rblnErr     error
+	depsLibs    []discover.Library
+	depsErr     error
+	pluginLibs  []discover.Library
+	pluginErr   error
+	providers   []discover.RDMAProvider
+	providerErr error
+	callOrder   []string
 }
 
 func (m *mockLibraryDiscoverer) DiscoverRBLN() ([]discover.Library, error) {
@@ -77,6 +79,11 @@ func (m *mockLibraryDiscoverer) DiscoverDependencies(_ []discover.Library) ([]di
 func (m *mockLibraryDiscoverer) DiscoverPlugins() ([]discover.Library, error) {
 	m.callOrder = append(m.callOrder, "plugins")
 	return m.pluginLibs, m.pluginErr
+}
+
+func (m *mockLibraryDiscoverer) DiscoverRDMAProviders() ([]discover.RDMAProvider, error) {
+	m.callOrder = append(m.callOrder, "rdma-providers")
+	return m.providers, m.providerErr
 }
 
 func TestGenerateCDISpec_StrictMode_FailsOnError(t *testing.T) {
@@ -183,11 +190,11 @@ func TestDiscoverResources_CorrectOrder(t *testing.T) {
 	// When DiscoverResources is called
 	result, err := DiscoverResources(mockLibDisc, nil, nil)
 
-	// Then discovery should happen in order: RBLN → Dependencies → Plugins
+	// Then discovery should happen in order: RBLN → Dependencies → Plugins → RDMA providers
 	require.NoError(t, err, "DiscoverResources should succeed")
 	require.NotNil(t, result, "result should not be nil")
-	assert.Equal(t, []string{"rbln", "deps", "plugins"}, mockLibDisc.callOrder,
-		"discovery order should be RBLN → Dependencies → Plugins")
+	assert.Equal(t, []string{"rbln", "deps", "plugins", "rdma-providers"}, mockLibDisc.callOrder,
+		"discovery order should be RBLN → Dependencies → Plugins → RDMA providers")
 }
 
 func TestGenerateCDISpec_RequiresConfig(t *testing.T) {
@@ -363,6 +370,42 @@ func TestDiscoverResources_PluginError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "plugins")
+}
+
+func TestDiscoverResources_RDMAProviderError(t *testing.T) {
+	// Given a discoverer that fails on RDMA providers
+	mockLibDisc := &mockLibraryDiscoverer{
+		providerErr: assert.AnError,
+	}
+
+	// When DiscoverResources is called
+	result, err := DiscoverResources(mockLibDisc, nil, nil)
+
+	// Then an error should be returned
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "RDMA providers")
+}
+
+func TestDiscoverResources_WithRDMAProviders(t *testing.T) {
+	// Given a discoverer that finds a host-installed RDMA provider
+	provider := discover.RDMAProvider{
+		Name:          "libbnxt_re-rdmav34.so",
+		Path:          "/usr/local/lib/libbnxt_re-rdmav34.so",
+		ContainerPath: "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
+		DriverPath:    "/etc/libibverbs.d/bnxt_re.driver",
+	}
+	mockLibDisc := &mockLibraryDiscoverer{
+		providers: []discover.RDMAProvider{provider},
+	}
+
+	// When DiscoverResources is called
+	result, err := DiscoverResources(mockLibDisc, nil, nil)
+
+	// Then the provider is carried separately from the libraries
+	require.NoError(t, err)
+	assert.Equal(t, []discover.RDMAProvider{provider}, result.RDMAProviders)
+	assert.Empty(t, result.Libraries)
 }
 
 func TestDiscoverResources_ToolError(t *testing.T) {

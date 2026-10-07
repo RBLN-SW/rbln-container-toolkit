@@ -686,3 +686,148 @@ func TestLibraryDiscoverer_DiscoverDependencies(t *testing.T) {
 		})
 	}
 }
+
+// DiscoverRDMAProviders tests
+
+const (
+	testProviderLib    = "/usr/local/lib/libbnxt_re-rdmav34.so"
+	testProviderDriver = "/etc/libibverbs.d/bnxt_re.driver"
+	testProviderDir    = "/usr/lib/x86_64-linux-gnu/libibverbs"
+)
+
+// createHostFile creates an empty file at root+path, making parent directories.
+func createHostFile(t *testing.T, root, path string) {
+	t.Helper()
+	full := filepath.Join(root, path)
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0755))
+	require.NoError(t, os.WriteFile(full, nil, 0644))
+}
+
+func newProviderConfig(hostRoot, driver string) *config.Config {
+	cfg := config.DefaultConfig()
+	cfg.HostRoot = hostRoot
+	cfg.Libraries.RDMAProviders = []config.RDMAProviderConfig{
+		{Library: testProviderLib, Driver: driver},
+	}
+	cfg.Libraries.RDMAProviderDir = testProviderDir
+	return cfg
+}
+
+func TestLibraryDiscoverer_DiscoverRDMAProviders(t *testing.T) {
+	tests := []struct {
+		name      string
+		hostFiles []string
+		driver    string
+		expected  []RDMAProvider
+	}{
+		{
+			name:      "library and driver file present",
+			hostFiles: []string{testProviderLib, testProviderDriver},
+			driver:    testProviderDriver,
+			expected: []RDMAProvider{{
+				Name:          "libbnxt_re-rdmav34.so",
+				Path:          testProviderLib,
+				ContainerPath: testProviderDir + "/libbnxt_re-rdmav34.so",
+				DriverPath:    testProviderDriver,
+			}},
+		},
+		{
+			name:      "library missing",
+			hostFiles: []string{testProviderDriver},
+			driver:    testProviderDriver,
+			expected:  []RDMAProvider{},
+		},
+		{
+			name:      "configured driver file missing",
+			hostFiles: []string{testProviderLib},
+			driver:    testProviderDriver,
+			expected:  []RDMAProvider{},
+		},
+		{
+			name:      "no driver file configured",
+			hostFiles: []string{testProviderLib},
+			driver:    "",
+			expected: []RDMAProvider{{
+				Name:          "libbnxt_re-rdmav34.so",
+				Path:          testProviderLib,
+				ContainerPath: testProviderDir + "/libbnxt_re-rdmav34.so",
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given: A host root holding some of the provider's files
+			hostRoot := t.TempDir()
+			for _, path := range tt.hostFiles {
+				createHostFile(t, hostRoot, path)
+			}
+			cfg := newProviderConfig(hostRoot, tt.driver)
+
+			// When: Discovering RDMA providers
+			providers, err := NewLibraryDiscoverer(cfg).DiscoverRDMAProviders()
+
+			// Then: The provider is reported only when every configured file
+			// exists, with real host paths (HostRoot stripped)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, providers)
+		})
+	}
+}
+
+func TestLibraryDiscoverer_DiscoverRDMAProviders_LibraryIsDirectory(t *testing.T) {
+	// Given: A directory where the provider library is expected
+	hostRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, testProviderLib), 0755))
+	cfg := newProviderConfig(hostRoot, "")
+
+	// When: Discovering RDMA providers
+	providers, err := NewLibraryDiscoverer(cfg).DiscoverRDMAProviders()
+
+	// Then: Only a regular file counts as an installed provider
+	require.NoError(t, err)
+	assert.Empty(t, providers)
+}
+
+func TestLibraryDiscoverer_DiscoverRDMAProviders_IgnoresDriverAndSearchRoot(t *testing.T) {
+	// Given: A driver-container deployment where the daemon sees the host at
+	// hostRoot and the RBLN driver under hostRoot/run/rbln/driver. The provider
+	// is installed by the host, not the driver; a decoy sits under the driver
+	// root that discovery must not pick up.
+	hostRoot := t.TempDir()
+	createHostFile(t, hostRoot, testProviderLib)
+	createHostFile(t, hostRoot, testProviderDriver)
+	driverRoot := "/run/rbln/driver"
+	createHostFile(t, filepath.Join(hostRoot, driverRoot), "/usr/local/lib/libbnxt_re-rdmav99.so")
+
+	cfg := newProviderConfig(hostRoot, testProviderDriver)
+	cfg.DriverRoot = driverRoot
+	cfg.SearchRoot = filepath.Join(hostRoot, driverRoot)
+	cfg.Libraries.RDMAProviders = append(cfg.Libraries.RDMAProviders,
+		config.RDMAProviderConfig{Library: "/usr/local/lib/libbnxt_re-rdmav99.so"})
+
+	// When: Discovering RDMA providers
+	providers, err := NewLibraryDiscoverer(cfg).DiscoverRDMAProviders()
+
+	// Then: Only the host-installed provider is found, at its real host path
+	require.NoError(t, err)
+	require.Len(t, providers, 1)
+	assert.Equal(t, testProviderLib, providers[0].Path)
+	assert.Equal(t, testProviderDriver, providers[0].DriverPath)
+}
+
+func TestLibraryDiscoverer_DiscoverRDMAProviders_EmptyProviderDir(t *testing.T) {
+	// Given: An installed provider but no container provider directory
+	hostRoot := t.TempDir()
+	createHostFile(t, hostRoot, testProviderLib)
+	createHostFile(t, hostRoot, testProviderDriver)
+	cfg := newProviderConfig(hostRoot, testProviderDriver)
+	cfg.Libraries.RDMAProviderDir = ""
+
+	// When: Discovering RDMA providers
+	providers, err := NewLibraryDiscoverer(cfg).DiscoverRDMAProviders()
+
+	// Then: Providers are disabled rather than mounted at a relative path
+	require.NoError(t, err)
+	assert.Empty(t, providers)
+}

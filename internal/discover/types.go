@@ -61,6 +61,16 @@ type Tool struct {
 	ContainerPath string // Path as seen inside container (without driver-root prefix)
 }
 
+// RDMAProvider represents a libibverbs provider installed by the host itself
+// (outside the driver root), together with the file that registers it with
+// libibverbs.
+type RDMAProvider struct {
+	Name          string // Provider library file name (e.g., libbnxt_re-rdmav34.so)
+	Path          string // Provider library path on host
+	ContainerPath string // Path inside container, in the libibverbs provider directory
+	DriverPath    string // Registration file, same path on host and in container (empty if not configured)
+}
+
 // Device represents a discovered device node (e.g., /dev/rbln0).
 type Device struct {
 	Path          string // Absolute path on host (e.g., /dev/rbln0)
@@ -69,9 +79,10 @@ type Device struct {
 
 // DiscoveryResult holds the complete discovery result.
 type DiscoveryResult struct {
-	Libraries []Library
-	Tools     []Tool
-	Devices   []Device
+	Libraries     []Library
+	RDMAProviders []RDMAProvider
+	Tools         []Tool
+	Devices       []Device
 }
 
 // Discoverer is the interface for resource discovery.
@@ -90,6 +101,10 @@ type LibraryDiscoverer interface {
 
 	// DiscoverPlugins discovers dlopen plugin libraries.
 	DiscoverPlugins() ([]Library, error)
+
+	// DiscoverRDMAProviders discovers the configured host-installed libibverbs
+	// providers.
+	DiscoverRDMAProviders() ([]RDMAProvider, error)
 }
 
 // ToolDiscoverer discovers tools.

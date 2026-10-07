@@ -322,6 +322,44 @@ func (d *libraryDiscoverer) DiscoverPlugins() ([]Library, error) {
 	return plugins, nil
 }
 
+// DiscoverRDMAProviders returns the configured libibverbs providers whose files
+// all exist on the host. The host, not the RBLN driver, installs them, so they
+// are looked up under HostRoot rather than SearchRoot and keep their real host
+// paths. A provider with a missing file is skipped, not reported as an error:
+// most hosts do not have any given vendor's provider.
+func (d *libraryDiscoverer) DiscoverRDMAProviders() ([]RDMAProvider, error) {
+	providerDir := d.cfg.Libraries.RDMAProviderDir
+	if providerDir == "" {
+		return nil, nil
+	}
+
+	providers := make([]RDMAProvider, 0, len(d.cfg.Libraries.RDMAProviders))
+	for _, p := range d.cfg.Libraries.RDMAProviders {
+		if p.Library == "" || !d.isHostFile(p.Library) {
+			continue
+		}
+		if p.Driver != "" && !d.isHostFile(p.Driver) {
+			continue
+		}
+
+		name := filepath.Base(p.Library)
+		providers = append(providers, RDMAProvider{
+			Name:          name,
+			Path:          p.Library,
+			ContainerPath: filepath.Join(providerDir, name),
+			DriverPath:    p.Driver,
+		})
+	}
+
+	return providers, nil
+}
+
+// isHostFile reports whether path names a regular file on the host.
+func (d *libraryDiscoverer) isHostFile(path string) bool {
+	info, err := os.Stat(filepath.Join(d.cfg.HostRoot, path))
+	return err == nil && info.Mode().IsRegular()
+}
+
 // isGlibc checks if the library name matches glibc exclude patterns.
 func (d *libraryDiscoverer) isGlibc(name string) bool {
 	for _, pattern := range d.cfg.GlibcExclude {

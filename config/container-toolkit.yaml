@@ -83,6 +83,27 @@ libraries:
   # Leave empty (default) to use the same paths as on the host.
   container-path: ""
 
+  # libibverbs providers installed by the host itself rather than by the RBLN
+  # driver, such as a NIC vendor's out-of-tree provider. They are looked up on
+  # the host root (not under the driver root), and a provider is injected only
+  # when all of its files exist there; on any other host nothing is added.
+  #   library: provider library on the host, mounted into rdma-provider-dir
+  #            under the same file name
+  #   driver:  (optional) file registering the provider with libibverbs,
+  #            mounted at the same path
+  # Set to [] to disable.
+  rdma-providers:
+    # Broadcom bnxt_re. rdmav34 is the provider ABI of rdma-core 39, the
+    # libibverbs NPU containers receive along with the RBLN libraries.
+    - library: /usr/local/lib/libbnxt_re-rdmav34.so
+      driver: /etc/libibverbs.d/bnxt_re.driver
+
+  # Provider directory compiled into the container's libibverbs. libibverbs
+  # tries this directory before the dynamic linker search path, so a provider
+  # mounted here also replaces an inbox provider of the same name in the
+  # container image. Not affected by container-path.
+  rdma-provider-dir: /usr/lib/x86_64-linux-gnu/libibverbs
+
 # Tools to include in CDI specification
 tools:
   - rbln-smi

@@ -213,3 +213,43 @@ func TestFormatter_Format_YAML_LibraryTypes(t *testing.T) {
 	assert.Contains(t, output, "type: rbln")
 	assert.Contains(t, output, "type: dependency")
 }
+
+func TestFormatter_Format_RDMAProviders(t *testing.T) {
+	// Given: A discovery result with a host-installed RDMA provider
+	result := &discover.DiscoveryResult{
+		RDMAProviders: []discover.RDMAProvider{
+			{
+				Name:          "libbnxt_re-rdmav34.so",
+				Path:          "/usr/local/lib/libbnxt_re-rdmav34.so",
+				ContainerPath: "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
+				DriverPath:    "/etc/libibverbs.d/bnxt_re.driver",
+			},
+		},
+	}
+
+	t.Run("table", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		// When: Formatting as table
+		require.NoError(t, NewFormatter(&buf).Format(result, "table"))
+
+		// Then: The provider is listed with its host path
+		assert.Regexp(t, `rdma-provider\s+libbnxt_re-rdmav34.so\s+/usr/local/lib/libbnxt_re-rdmav34.so`, buf.String())
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		// When: Formatting as JSON
+		require.NoError(t, NewFormatter(&buf).Format(result, "json"))
+
+		// Then: The provider appears under rdmaProviders with its driver file
+		var parsed ListOutput
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
+		assert.Equal(t, []RDMAProviderOutput{{
+			Name:   "libbnxt_re-rdmav34.so",
+			Path:   "/usr/local/lib/libbnxt_re-rdmav34.so",
+			Driver: "/etc/libibverbs.d/bnxt_re.driver",
+		}}, parsed.RDMAProviders)
+	})
+}

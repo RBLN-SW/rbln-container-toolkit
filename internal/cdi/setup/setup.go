@@ -303,6 +303,12 @@ func DiscoverResources(libDisc discover.LibraryDiscoverer, toolDisc discover.Too
 	}
 	result.Libraries = append(result.Libraries, plugins...)
 
+	providers, err := libDisc.DiscoverRDMAProviders()
+	if err != nil {
+		return nil, fmt.Errorf("discover RDMA providers: %w", err)
+	}
+	result.RDMAProviders = providers
+
 	if toolDisc != nil {
 		tools, err := toolDisc.Discover()
 		if err != nil {

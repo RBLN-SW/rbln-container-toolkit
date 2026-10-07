@@ -1,5 +1,21 @@
 # RBLN Container Toolkit Changelog
 
+## v0.2.6
+
+- **Mount host-installed libibverbs providers into NPU containers.** RDMA over
+  Broadcom NICs needs the out-of-tree `bnxt_re` provider built against the
+  libibverbs that NPU containers receive, and that provider previously had to
+  reach the pod through a separate, hand-maintained CDI spec. The NPU spec now
+  carries it whenever the host has it installed:
+  `/usr/local/lib/libbnxt_re-rdmav34.so` is mounted into the container's
+  libibverbs provider directory (`/usr/lib/x86_64-linux-gnu/libibverbs/`), and
+  `/etc/libibverbs.d/bnxt_re.driver` at the same path. libibverbs tries that
+  directory before the dynamic linker search path, so the mount also replaces
+  an inbox provider of the same name shipped in the image. Providers are looked
+  up on the host root rather than the driver root, and a host without them gets
+  no extra mounts. The list is configurable through `libraries.rdma-providers`
+  and `libraries.rdma-provider-dir`.
+
 ## v0.2.5
 
 - **Expose the RSD group device as `/dev/rsd0` inside the container for

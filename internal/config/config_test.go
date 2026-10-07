@@ -41,6 +41,12 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "/var/run/cdi/rbln-rds.yaml", cfg.RDS.OutputPath)
 	assert.Contains(t, cfg.RDS.Patterns, "/dev/rblnfs*")
 	assert.Contains(t, cfg.Libraries.Patterns, "librbln-*.so*")
+	// Host-installed RDMA provider, mounted into the Debian provider directory.
+	assert.Contains(t, cfg.Libraries.RDMAProviders, RDMAProviderConfig{
+		Library: "/usr/local/lib/libbnxt_re-rdmav34.so",
+		Driver:  "/etc/libibverbs.d/bnxt_re.driver",
+	})
+	assert.Equal(t, "/usr/lib/x86_64-linux-gnu/libibverbs", cfg.Libraries.RDMAProviderDir)
 	assert.Contains(t, cfg.Tools, "rbln-smi")
 	assert.Equal(t, "/", cfg.DriverRoot)
 	assert.False(t, cfg.Debug)
@@ -380,4 +386,44 @@ func TestLoader_CLIOverridesEnvForContainerPath(t *testing.T) {
 	// Then: CLI option should win
 	require.NoError(t, err)
 	assert.Equal(t, "/cli/path", cfg.Libraries.ContainerPath)
+}
+
+func TestLoader_LoadFromFile_WithRDMAProviders(t *testing.T) {
+	// Given: A config file that replaces the RDMA provider list
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := `
+libraries:
+  rdma-providers:
+    - library: /opt/vendor/lib/libfoo-rdmav34.so
+      driver: /etc/libibverbs.d/foo.driver
+    - library: /opt/vendor/lib/libbar-rdmav34.so
+  rdma-provider-dir: /usr/lib/aarch64-linux-gnu/libibverbs
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644))
+
+	// When: Loading from file
+	cfg, err := NewLoader().WithFile(configPath).Load()
+
+	// Then: The file's list replaces the default one
+	require.NoError(t, err)
+	assert.Equal(t, []RDMAProviderConfig{
+		{Library: "/opt/vendor/lib/libfoo-rdmav34.so", Driver: "/etc/libibverbs.d/foo.driver"},
+		{Library: "/opt/vendor/lib/libbar-rdmav34.so"},
+	}, cfg.Libraries.RDMAProviders)
+	assert.Equal(t, "/usr/lib/aarch64-linux-gnu/libibverbs", cfg.Libraries.RDMAProviderDir)
+}
+
+func TestLoader_SampleConfig_RDMAProvidersMatchDefaults(t *testing.T) {
+	// Given: The sample config, which the container image installs as
+	// /etc/rbln/container-toolkit.yaml and so overrides the built-in defaults
+
+	// When: Loading it
+	cfg, err := NewLoader().WithFile("../../config/container-toolkit.yaml").Load()
+
+	// Then: It keeps the same RDMA providers as the defaults
+	require.NoError(t, err)
+	defaults := DefaultConfig()
+	assert.Equal(t, defaults.Libraries.RDMAProviders, cfg.Libraries.RDMAProviders)
+	assert.Equal(t, defaults.Libraries.RDMAProviderDir, cfg.Libraries.RDMAProviderDir)
 }

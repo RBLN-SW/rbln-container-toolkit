@@ -80,14 +80,14 @@ func (d *deviceDiscoverer) Discover() ([]Device, error) {
 }
 
 // getSearchRoot returns the filesystem root under which device nodes are
-// globbed. Devices always live in the host's real /dev, so this is DeviceRoot
+// globbed. Devices always live in the host's real /dev, so this is HostRoot
 // (the host root: "/host" in a containerized daemon, "/" otherwise) and never
-// the driver install directory. An empty DeviceRoot means the host root "/".
+// the driver install directory. An empty HostRoot means the host root "/".
 func (d *deviceDiscoverer) getSearchRoot() string {
-	if d.cfg.DeviceRoot == "" {
+	if d.cfg.HostRoot == "" {
 		return "/"
 	}
-	return d.cfg.DeviceRoot
+	return d.cfg.HostRoot
 }
 
 // toContainerPath converts a host path to the container-visible path. Device
@@ -100,7 +100,7 @@ func (d *deviceDiscoverer) toContainerPath(hostPath string) string {
 }
 
 // toHostPath converts a discovered path back to its real host path by stripping
-// the DeviceRoot prefix. The result is the host-absolute device path (e.g.
+// the HostRoot prefix. The result is the host-absolute device path (e.g.
 // /dev/rblnfs0) that a container runtime binds into workloads. DriverRoot is
 // deliberately not prepended: device nodes are addressed by their real /dev
 // path on the host regardless of where driver libraries were installed.

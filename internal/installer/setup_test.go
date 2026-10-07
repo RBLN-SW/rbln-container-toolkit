@@ -984,7 +984,7 @@ func TestGenerateRDSSpec_WritesSpecWhenDevicePresent(t *testing.T) {
 	cdiSpecDir := filepath.Join(t.TempDir(), "cdi")
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = root // device discovery rooted at the (temp) host mount
+	cfg.HostRoot = root // device discovery rooted at the (temp) host mount
 	gen := cdi.NewGenerator(cfg, nil)
 
 	require.NoError(t, generateRDSSpec(cfg, cdiSpecDir, gen))
@@ -994,7 +994,7 @@ func TestGenerateRDSSpec_WritesSpecWhenDevicePresent(t *testing.T) {
 	out := string(data)
 	assert.Contains(t, out, "kind: rebellions.ai/rds")
 	assert.Contains(t, out, "name: rblnfs0")
-	// Emitted device paths are the real host paths (DeviceRoot stripped), not
+	// Emitted device paths are the real host paths (HostRoot stripped), not
 	// prefixed with the temp host mount.
 	assert.Contains(t, out, "/dev/rblnfs0")
 	assert.Contains(t, out, "/dev/rblnfs1")
@@ -1011,7 +1011,7 @@ func TestGenerateRDSSpec_PrunesStaleWhenNoDevice(t *testing.T) {
 	require.NoError(t, os.WriteFile(rdsPath, []byte("stale: spec\n"), 0o644))
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = root // hermetic: glob under the empty temp dir, not the real /dev
+	cfg.HostRoot = root // hermetic: glob under the empty temp dir, not the real /dev
 	gen := cdi.NewGenerator(cfg, nil)
 
 	require.NoError(t, generateRDSSpec(cfg, cdiSpecDir, gen))

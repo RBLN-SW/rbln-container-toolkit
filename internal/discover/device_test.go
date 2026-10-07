@@ -41,14 +41,14 @@ func TestDeviceDiscoverer_Discover(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = tmpDir
+	cfg.HostRoot = tmpDir
 	cfg.Devices.Patterns = []string{"/dev/rbln*", "/dev/rsd*"}
 
 	// When
 	discoverer := NewDeviceDiscoverer(cfg)
 	devices, err := discoverer.Discover()
 
-	// Then: paths are the real host paths with DeviceRoot stripped.
+	// Then: paths are the real host paths with HostRoot stripped.
 	require.NoError(t, err)
 	assert.Len(t, devices, 3)
 	assert.Equal(t, "/dev/rbln0", devices[0].Path)
@@ -63,7 +63,7 @@ func TestDeviceDiscoverer_Discover_NoDevices(t *testing.T) {
 	require.NoError(t, os.MkdirAll(devDir, 0755))
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = tmpDir
+	cfg.HostRoot = tmpDir
 	cfg.Devices.Patterns = []string{"/dev/rbln*", "/dev/rsd*"}
 
 	// When
@@ -87,7 +87,7 @@ func TestDeviceDiscoverer_Discover_SkipsDirectories(t *testing.T) {
 	f.Close()
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = tmpDir
+	cfg.HostRoot = tmpDir
 	cfg.Devices.Patterns = []string{"/dev/rbln*"}
 
 	// When
@@ -111,7 +111,7 @@ func TestDeviceDiscoverer_Discover_Deduplication(t *testing.T) {
 	f.Close()
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = tmpDir
+	cfg.HostRoot = tmpDir
 	cfg.Devices.Patterns = []string{"/dev/rbln*", "/dev/rbln0"}
 
 	// When
@@ -136,7 +136,7 @@ func TestDeviceDiscoverer_Discover_Sorted(t *testing.T) {
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = tmpDir
+	cfg.HostRoot = tmpDir
 	cfg.Devices.Patterns = []string{"/dev/rbln*"}
 
 	// When
@@ -153,9 +153,9 @@ func TestDeviceDiscoverer_Discover_Sorted(t *testing.T) {
 
 func TestDeviceDiscoverer_Discover_DriverContainer(t *testing.T) {
 	// Regression: on driver-container deployments the daemon sets
-	// DeviceRoot=hostRoot (e.g. /host) and DriverRoot=/run/rbln/driver. Kernel
+	// HostRoot=hostRoot (e.g. /host) and DriverRoot=/run/rbln/driver. Kernel
 	// device nodes live in the host's real /dev (hostRoot/dev), NOT under the
-	// driver install dir, so discovery must root at DeviceRoot and emit the real
+	// driver install dir, so discovery must root at HostRoot and emit the real
 	// host path — never re-rooted under DriverRoot.
 	hostRoot := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, "dev"), 0755))
@@ -172,7 +172,7 @@ func TestDeviceDiscoverer_Discover_DriverContainer(t *testing.T) {
 	decoy.Close()
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = hostRoot
+	cfg.HostRoot = hostRoot
 	cfg.SearchRoot = filepath.Join(hostRoot, "run", "rbln", "driver") // libs/tools root
 	cfg.DriverRoot = "/run/rbln/driver"
 	cfg.Devices.Patterns = []string{"/dev/rblnfs*"}
@@ -191,9 +191,9 @@ func TestDeviceDiscoverer_Discover_DriverContainer(t *testing.T) {
 func TestDeviceDiscoverer_Discover_IgnoresDriverAndSearchRoot(t *testing.T) {
 	// SearchRoot/DriverRoot are for driver-installed libraries and tools; they
 	// must not influence device discovery. Devices resolve purely from
-	// DeviceRoot, and their host path is DeviceRoot-relative (real /dev path).
-	deviceRoot := t.TempDir()
-	devDir := filepath.Join(deviceRoot, "dev")
+	// HostRoot, and their host path is HostRoot-relative (real /dev path).
+	hostRoot := t.TempDir()
+	devDir := filepath.Join(hostRoot, "dev")
 	require.NoError(t, os.MkdirAll(devDir, 0755))
 
 	f, err := os.Create(filepath.Join(devDir, "rbln0"))
@@ -201,7 +201,7 @@ func TestDeviceDiscoverer_Discover_IgnoresDriverAndSearchRoot(t *testing.T) {
 	f.Close()
 
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = deviceRoot
+	cfg.HostRoot = hostRoot
 	cfg.SearchRoot = "/some/other/search/root"
 	cfg.DriverRoot = "/run/rbln/driver"
 	cfg.Devices.Patterns = []string{"/dev/rbln*"}
@@ -210,7 +210,7 @@ func TestDeviceDiscoverer_Discover_IgnoresDriverAndSearchRoot(t *testing.T) {
 	discoverer := NewDeviceDiscoverer(cfg)
 	devices, err := discoverer.Discover()
 
-	// Then: found under DeviceRoot, emitted as the real host path.
+	// Then: found under HostRoot, emitted as the real host path.
 	require.NoError(t, err)
 	require.Len(t, devices, 1)
 	assert.Equal(t, "/dev/rbln0", devices[0].Path)
@@ -218,7 +218,7 @@ func TestDeviceDiscoverer_Discover_IgnoresDriverAndSearchRoot(t *testing.T) {
 }
 
 func TestDeviceDiscoverer_Discover_BareMetalDefaultRoot(t *testing.T) {
-	// Empty DeviceRoot means the host root "/": device paths are returned as-is
+	// Empty HostRoot means the host root "/": device paths are returned as-is
 	// and DriverRoot (a --driver-root override for libraries) is not applied to
 	// device nodes.
 	d := &deviceDiscoverer{cfg: &config.Config{DriverRoot: "/run/rbln/driver"}}

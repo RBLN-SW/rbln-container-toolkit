@@ -49,6 +49,10 @@ func (m *mockLibraryDiscoverer) DiscoverPlugins() ([]discover.Library, error) {
 	return m.plugins, m.pluginsErr
 }
 
+func (m *mockLibraryDiscoverer) DiscoverRDMAProviders() ([]discover.RDMAProvider, error) {
+	return nil, nil
+}
+
 type mockToolDiscoverer struct {
 	tools []discover.Tool
 	err   error

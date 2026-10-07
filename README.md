@@ -404,6 +404,27 @@ This mode:
 - Avoids `LD_LIBRARY_PATH` — the ldcache handles library resolution natively
 - Supports setuid binaries (which ignore `LD_LIBRARY_PATH`)
 
+### Host RDMA Providers
+
+The NPU spec can also carry libibverbs providers that the host installs itself,
+outside the RBLN driver, such as a NIC vendor's out-of-tree provider. Each entry
+in `libraries.rdma-providers` is looked up on the host root (`/host` for the
+daemon), and only when all of its files exist does the spec mount the provider
+library into the container's libibverbs provider directory
+(`libraries.rdma-provider-dir`) and its `/etc/libibverbs.d/*.driver` file at the
+same path. Hosts without the provider get no extra mounts.
+
+The default list covers Broadcom's `bnxt_re` provider:
+
+| Host | Container |
+|---|---|
+| `/usr/local/lib/libbnxt_re-rdmav34.so` | `/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so` |
+| `/etc/libibverbs.d/bnxt_re.driver` | `/etc/libibverbs.d/bnxt_re.driver` |
+
+The provider directory does not follow `--container-library-path`: libibverbs
+tries that directory before the dynamic linker search path, so the mount also
+replaces an inbox provider of the same name shipped in the container image.
+
 ### Systemd Integration
 
 For automatic CDI spec refresh when driver files change:
@@ -426,7 +447,7 @@ Key configuration sections:
 | Section | Controls |
 |---------|----------|
 | `cdi` | Output path, format, vendor/class names |
-| `libraries` | Discovery patterns, plugin paths, container isolation path |
+| `libraries` | Discovery patterns, plugin paths, container isolation path, host RDMA providers |
 | `tools` | Which CLI tools to include (e.g., `rbln-smi`) |
 | `search-paths` | Where to look for libraries and binaries |
 | `glibc-exclude` | System libraries to exclude from CDI spec |

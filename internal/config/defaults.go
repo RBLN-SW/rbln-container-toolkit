@@ -37,6 +37,16 @@ func DefaultConfig() *Config {
 				"/usr/lib/x86_64-linux-gnu/libibverbs",
 			},
 			ContainerPath: "", // Empty = default mode (hostPath == containerPath)
+			// Broadcom bnxt_re out-of-tree provider. rdmav34 is the provider
+			// ABI of rdma-core 39, the libibverbs NPU containers receive along
+			// with the RBLN libraries. Skipped on hosts where it is not installed.
+			RDMAProviders: []RDMAProviderConfig{
+				{
+					Library: "/usr/local/lib/libbnxt_re-rdmav34.so",
+					Driver:  "/etc/libibverbs.d/bnxt_re.driver",
+				},
+			},
+			RDMAProviderDir: "/usr/lib/x86_64-linux-gnu/libibverbs",
 		},
 		Devices: DeviceConfig{
 			Patterns: []string{"/dev/rbln*", "/dev/rsd*"},

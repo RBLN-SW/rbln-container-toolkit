@@ -65,6 +65,9 @@ func (f *Formatter) formatTable(result *discover.DiscoveryResult) error {
 		for _, lib := range result.Libraries {
 			fmt.Fprintf(w, "library\t%s\t%s\n", lib.Name, lib.Path)
 		}
+		for _, provider := range result.RDMAProviders {
+			fmt.Fprintf(w, "rdma-provider\t%s\t%s\n", provider.Name, provider.Path)
+		}
 		for _, tool := range result.Tools {
 			fmt.Fprintf(w, "tool\t%s\t%s\n", tool.Name, tool.Path)
 		}
@@ -83,9 +86,10 @@ func (f *Formatter) formatTable(result *discover.DiscoveryResult) error {
 
 // ListOutput is the JSON/YAML output structure.
 type ListOutput struct {
-	Libraries []LibraryOutput `json:"libraries" yaml:"libraries"`
-	Tools     []ToolOutput    `json:"tools" yaml:"tools"`
-	Devices   []DeviceOutput  `json:"devices" yaml:"devices"`
+	Libraries     []LibraryOutput      `json:"libraries" yaml:"libraries"`
+	RDMAProviders []RDMAProviderOutput `json:"rdmaProviders" yaml:"rdmaProviders"`
+	Tools         []ToolOutput         `json:"tools" yaml:"tools"`
+	Devices       []DeviceOutput       `json:"devices" yaml:"devices"`
 }
 
 // LibraryOutput is the library output structure.
@@ -93,6 +97,13 @@ type LibraryOutput struct {
 	Name string `json:"name" yaml:"name"`
 	Path string `json:"path" yaml:"path"`
 	Type string `json:"type" yaml:"type"`
+}
+
+// RDMAProviderOutput is the RDMA provider output structure.
+type RDMAProviderOutput struct {
+	Name   string `json:"name" yaml:"name"`
+	Path   string `json:"path" yaml:"path"`
+	Driver string `json:"driver,omitempty" yaml:"driver,omitempty"`
 }
 
 // ToolOutput is the tool output structure.
@@ -108,9 +119,10 @@ type DeviceOutput struct {
 
 func (f *Formatter) toListOutput(result *discover.DiscoveryResult) ListOutput {
 	output := ListOutput{
-		Libraries: []LibraryOutput{},
-		Tools:     []ToolOutput{},
-		Devices:   []DeviceOutput{},
+		Libraries:     []LibraryOutput{},
+		RDMAProviders: []RDMAProviderOutput{},
+		Tools:         []ToolOutput{},
+		Devices:       []DeviceOutput{},
 	}
 
 	if result != nil {
@@ -119,6 +131,13 @@ func (f *Formatter) toListOutput(result *discover.DiscoveryResult) ListOutput {
 				Name: lib.Name,
 				Path: lib.Path,
 				Type: lib.Type.String(),
+			})
+		}
+		for _, provider := range result.RDMAProviders {
+			output.RDMAProviders = append(output.RDMAProviders, RDMAProviderOutput{
+				Name:   provider.Name,
+				Path:   provider.Path,
+				Driver: provider.DriverPath,
 			})
 		}
 		for _, tool := range result.Tools {

@@ -105,10 +105,11 @@ const rblnfsEntryPrefix = "rblnfs"
 // Generate creates a CDI spec from discovery results.
 //
 // Spec layout:
-//   - top-level ContainerEdits: libraries, tools, hooks, env (applied to every
-//     selection). No device nodes — RSD attachment is decided per NPU via the
-//     resolver so users picking `--device rebellions.ai/npu=N` automatically
-//     receive the correct group device without listing it themselves.
+//   - top-level ContainerEdits: libraries, RDMA providers, tools, hooks, env
+//     (applied to every selection). No device nodes — RSD attachment is
+//     decided per NPU via the resolver so users picking
+//     `--device rebellions.ai/npu=N` automatically receive the correct group
+//     device without listing it themselves.
 //   - per-NPU entries named "0", "1", ... each carrying `/dev/rbln{N}` plus
 //     the resolved host `/dev/rsd{GroupID}` when the resolver knows the
 //     mapping, exposed inside the container as `/dev/rsd0` (rsdContainerPath)
@@ -254,10 +255,11 @@ func isContainerEditsEmpty(e *specs.ContainerEdits) bool {
 }
 
 // buildCommonEdits returns ContainerEdits shared across every device selection:
-// library/tool mounts, ldcache + symlink hooks, and any required env vars.
-// Device nodes are intentionally kept out — RSD attachment is per-NPU (via
-// the resolver) and the `all` entry carries the bulk-mount handle, so the
-// top-level block stays device-node-free regardless of host topology.
+// library/tool and RDMA provider mounts, ldcache + symlink hooks, and any
+// required env vars. Device nodes are intentionally kept out — RSD attachment
+// is per-NPU (via the resolver) and the `all` entry carries the bulk-mount
+// handle, so the top-level block stays device-node-free regardless of host
+// topology.
 func (g *generator) buildCommonEdits(result *discover.DiscoveryResult) specs.ContainerEdits {
 	edits := specs.ContainerEdits{}
 	if result == nil {
@@ -266,6 +268,24 @@ func (g *generator) buildCommonEdits(result *discover.DiscoveryResult) specs.Con
 
 	libPaths := make(map[string]bool)
 	mountedPaths := make(map[string]bool)
+
+	// RDMA providers are mounted first so that they win over a plugin-directory
+	// library landing on the same container path (an inbox provider of the same
+	// name, or a host symlink to the provider itself). Their directory stays out
+	// of libPaths: libibverbs opens providers from its compiled-in provider
+	// directory, not through the ldcache.
+	for _, provider := range result.RDMAProviders {
+		if !mountedPaths[provider.ContainerPath] {
+			mount := g.createMountWithContainerPath(provider.Path, provider.ContainerPath)
+			edits.Mounts = append(edits.Mounts, &mount)
+			mountedPaths[provider.ContainerPath] = true
+		}
+		if provider.DriverPath != "" && !mountedPaths[provider.DriverPath] {
+			mount := g.createMountWithContainerPath(provider.DriverPath, provider.DriverPath)
+			edits.Mounts = append(edits.Mounts, &mount)
+			mountedPaths[provider.DriverPath] = true
+		}
+	}
 
 	for _, lib := range result.Libraries {
 		if lib.RealPath != "" && lib.RealPath != lib.Path {

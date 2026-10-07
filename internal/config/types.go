@@ -34,14 +34,15 @@ type Config struct {
 	DriverRoot string `yaml:"-"`
 	SearchRoot string `yaml:"-"` // Prefix for file access (e.g., /host when running in container)
 
-	// DeviceRoot is the filesystem root under which device nodes (/dev/*) are
-	// discovered. Kernel device nodes live in the host's real /dev, never under
-	// the driver install directory, so device discovery must NOT use SearchRoot
+	// HostRoot is the filesystem root under which files owned by the host
+	// itself, rather than by the driver install, are discovered: kernel device
+	// nodes (/dev/*) and host-installed RDMA providers. Neither ever lives under
+	// the driver install directory, so their discovery must NOT use SearchRoot
 	// (= hostRoot + DriverRoot) — that would look under DriverRoot on
-	// driver-container deployments and miss /dev/rblnfs* etc. DeviceRoot is the
+	// driver-container deployments and miss /dev/rblnfs* etc. HostRoot is the
 	// host filesystem root only: "/host" for a containerized daemon, "" or "/"
 	// on bare metal / CLI. Empty is treated as "/".
-	DeviceRoot string `yaml:"-"`
+	HostRoot string `yaml:"-"`
 }
 
 // CDIConfig represents CDI output settings.
@@ -101,6 +102,30 @@ type LibraryConfig struct {
 	// and LD_LIBRARY_PATH is configured to include this path.
 	// Empty string (default) means libraries use the same path as on the host.
 	ContainerPath string `yaml:"container-path"`
+	// RDMAProviders lists libibverbs providers installed by the host itself
+	// rather than by the RBLN driver, such as a NIC vendor's out-of-tree
+	// provider. A provider is injected only when all of its files exist on the
+	// host; on any other host it adds nothing to the spec.
+	RDMAProviders []RDMAProviderConfig `yaml:"rdma-providers"`
+	// RDMAProviderDir is the provider directory compiled into the container's
+	// libibverbs. Provider libraries are mounted there, independent of
+	// ContainerPath, because libibverbs tries that directory before the dynamic
+	// linker search path: the mount therefore also replaces an inbox provider
+	// of the same name shipped in the container image. Empty disables
+	// RDMAProviders.
+	RDMAProviderDir string `yaml:"rdma-provider-dir"`
+}
+
+// RDMAProviderConfig describes one host-installed libibverbs provider.
+type RDMAProviderConfig struct {
+	// Library is the host path of the provider library
+	// (lib<name>-rdmav<ABI>.so). It is mounted into RDMAProviderDir under the
+	// same file name.
+	Library string `yaml:"library"`
+	// Driver is the host path of the file that registers the provider with
+	// libibverbs (/etc/libibverbs.d/<name>.driver). It is mounted at the same
+	// path in the container. Optional.
+	Driver string `yaml:"driver"`
 }
 
 // SearchPathConfig represents search path settings.

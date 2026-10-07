@@ -1537,7 +1537,7 @@ func TestGenerator_Generate_MultiGroup_RSDAliasedToRsd0(t *testing.T) {
 	}
 }
 
-func TestGenerator_Generate_RSDAlias_KeepsDeviceRootHostPath(t *testing.T) {
+func TestGenerator_Generate_RSDAlias_KeepsHostRootHostPath(t *testing.T) {
 	// Given: device discovery rooted at a host mount (daemon-in-container
 	// path). The alias must rewrite only the container-side path and leave the
 	// re-rooted host path untouched, or the runtime would stat a non-existent
@@ -1549,7 +1549,7 @@ func TestGenerator_Generate_RSDAlias_KeepsDeviceRootHostPath(t *testing.T) {
 		},
 	}
 	cfg := config.DefaultConfig()
-	cfg.DeviceRoot = "/host"
+	cfg.HostRoot = "/host"
 	gen := NewGenerator(cfg, &fakeResolver{mapping: map[uint32]uint32{4: 1}})
 
 	// When
@@ -2025,4 +2025,144 @@ func TestGenerator_GenerateRDS_CustomClass(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, spec)
 	assert.Equal(t, "example.com/datastore", spec.Kind)
+}
+
+// --- Host-installed RDMA providers ------------------------------------------
+
+func testRDMAProvider() discover.RDMAProvider {
+	return discover.RDMAProvider{
+		Name:          "libbnxt_re-rdmav34.so",
+		Path:          "/usr/local/lib/libbnxt_re-rdmav34.so",
+		ContainerPath: "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
+		DriverPath:    "/etc/libibverbs.d/bnxt_re.driver",
+	}
+}
+
+// mountsAt returns the mounts in edits whose container path is containerPath.
+func mountsAt(edits specs.ContainerEdits, containerPath string) []*specs.Mount {
+	var out []*specs.Mount
+	for _, m := range edits.Mounts {
+		if m.ContainerPath == containerPath {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ldcacheFolders returns the --folder arguments of the update-ldcache hook.
+func ldcacheFolders(edits specs.ContainerEdits) []string {
+	var folders []string
+	for _, h := range edits.Hooks {
+		if len(h.Args) < 2 || h.Args[1] != "update-ldcache" {
+			continue
+		}
+		for i := 2; i+1 < len(h.Args); i += 2 {
+			if h.Args[i] == "--folder" {
+				folders = append(folders, h.Args[i+1])
+			}
+		}
+	}
+	return folders
+}
+
+func TestGenerator_Generate_RDMAProviderMounts(t *testing.T) {
+	// Given: an RBLN library plus a host-installed RDMA provider
+	provider := testRDMAProvider()
+	result := &discover.DiscoveryResult{
+		Libraries: []discover.Library{
+			{Name: "librbln-ml.so", Path: "/usr/lib64/librbln-ml.so", ContainerPath: "/usr/lib64/librbln-ml.so", Type: discover.LibraryTypeRBLN},
+		},
+		RDMAProviders: []discover.RDMAProvider{provider},
+	}
+	gen := NewGenerator(config.DefaultConfig(), nil)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: the provider library lands in the container's provider directory
+	// and its registration file at the same path, both read-only binds
+	require.NoError(t, err)
+	libMounts := mountsAt(spec.ContainerEdits, provider.ContainerPath)
+	require.Len(t, libMounts, 1)
+	assert.Equal(t, provider.Path, libMounts[0].HostPath)
+	assert.Equal(t, []string{"ro", "nosuid", "nodev", "bind"}, libMounts[0].Options)
+
+	driverMounts := mountsAt(spec.ContainerEdits, provider.DriverPath)
+	require.Len(t, driverMounts, 1)
+	assert.Equal(t, provider.DriverPath, driverMounts[0].HostPath)
+	assert.Equal(t, []string{"ro", "nosuid", "nodev", "bind"}, driverMounts[0].Options)
+
+	// The provider directory is not added to the ldcache: libibverbs opens
+	// providers from its compiled-in directory, not via the dynamic linker.
+	assert.Equal(t, []string{"/usr/lib64"}, ldcacheFolders(spec.ContainerEdits))
+}
+
+func TestGenerator_Generate_RDMAProviderWithoutDriverFile(t *testing.T) {
+	// Given: a provider configured without a registration file
+	provider := testRDMAProvider()
+	provider.DriverPath = ""
+	result := &discover.DiscoveryResult{RDMAProviders: []discover.RDMAProvider{provider}}
+	gen := NewGenerator(config.DefaultConfig(), nil)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: only the library is mounted
+	require.NoError(t, err)
+	require.Len(t, spec.ContainerEdits.Mounts, 1)
+	assert.Equal(t, provider.ContainerPath, spec.ContainerEdits.Mounts[0].ContainerPath)
+}
+
+func TestGenerator_Generate_RDMAProviderWinsOverPluginAtSamePath(t *testing.T) {
+	// Given: the host plugin directory holds an entry with the provider's
+	// name (an inbox provider, or a symlink to the out-of-tree one) that maps
+	// to the same container path as the configured provider
+	provider := testRDMAProvider()
+	result := &discover.DiscoveryResult{
+		Libraries: []discover.Library{
+			{
+				Name:          provider.Name,
+				Path:          provider.ContainerPath,
+				ContainerPath: provider.ContainerPath,
+				Type:          discover.LibraryTypePlugin,
+			},
+		},
+		RDMAProviders: []discover.RDMAProvider{provider},
+	}
+	gen := NewGenerator(config.DefaultConfig(), nil)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: a single mount at that path, sourced from the configured provider
+	require.NoError(t, err)
+	mounts := mountsAt(spec.ContainerEdits, provider.ContainerPath)
+	require.Len(t, mounts, 1)
+	assert.Equal(t, provider.Path, mounts[0].HostPath)
+}
+
+func TestGenerator_Generate_DevicesDisabled_CarriesRDMAProviderMounts(t *testing.T) {
+	// Given: the Kubernetes path, where common edits are folded into the
+	// `all`/`runtime` entries the device-plugin selects
+	provider := testRDMAProvider()
+	result := &discover.DiscoveryResult{
+		Libraries: []discover.Library{
+			{Name: "librbln-ml.so", Path: "/usr/lib64/librbln-ml.so", ContainerPath: "/usr/lib64/librbln-ml.so", Type: discover.LibraryTypeRBLN},
+		},
+		RDMAProviders: []discover.RDMAProvider{provider},
+	}
+	cfg := config.DefaultConfig()
+	cfg.Devices.Disabled = true
+	gen := NewGenerator(cfg, nil)
+
+	// When
+	spec, err := gen.Generate(result)
+
+	// Then: both entries carry the provider mounts
+	require.NoError(t, err)
+	for _, name := range []string{"all", "runtime"} {
+		dev := findDevice(t, spec, name)
+		assert.Len(t, mountsAt(dev.ContainerEdits, provider.ContainerPath), 1, name)
+		assert.Len(t, mountsAt(dev.ContainerEdits, provider.DriverPath), 1, name)
+	}
 }

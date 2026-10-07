@@ -89,6 +89,9 @@ var _ LibraryDiscoverer = &LibraryDiscovererMock{}
 //			DiscoverRBLNFunc: func() ([]Library, error) {
 //				panic("mock out the DiscoverRBLN method")
 //			},
+//			DiscoverRDMAProvidersFunc: func() ([]RDMAProvider, error) {
+//				panic("mock out the DiscoverRDMAProviders method")
+//			},
 //		}
 //
 //		// use mockedLibraryDiscoverer in code that requires LibraryDiscoverer
@@ -105,6 +108,9 @@ type LibraryDiscovererMock struct {
 	// DiscoverRBLNFunc mocks the DiscoverRBLN method.
 	DiscoverRBLNFunc func() ([]Library, error)
 
+	// DiscoverRDMAProvidersFunc mocks the DiscoverRDMAProviders method.
+	DiscoverRDMAProvidersFunc func() ([]RDMAProvider, error)
+
 	// calls tracks calls to the methods.
 	calls struct {
 		// DiscoverDependencies holds details about calls to the DiscoverDependencies method.
@@ -118,10 +124,14 @@ type LibraryDiscovererMock struct {
 		// DiscoverRBLN holds details about calls to the DiscoverRBLN method.
 		DiscoverRBLN []struct {
 		}
+		// DiscoverRDMAProviders holds details about calls to the DiscoverRDMAProviders method.
+		DiscoverRDMAProviders []struct {
+		}
 	}
-	lockDiscoverDependencies sync.RWMutex
-	lockDiscoverPlugins      sync.RWMutex
-	lockDiscoverRBLN         sync.RWMutex
+	lockDiscoverDependencies  sync.RWMutex
+	lockDiscoverPlugins       sync.RWMutex
+	lockDiscoverRBLN          sync.RWMutex
+	lockDiscoverRDMAProviders sync.RWMutex
 }
 
 // DiscoverDependencies calls DiscoverDependenciesFunc.
@@ -219,6 +229,37 @@ func (mock *LibraryDiscovererMock) DiscoverRBLNCalls() []struct {
 	mock.lockDiscoverRBLN.RLock()
 	calls = mock.calls.DiscoverRBLN
 	mock.lockDiscoverRBLN.RUnlock()
+	return calls
+}
+
+// DiscoverRDMAProviders calls DiscoverRDMAProvidersFunc.
+func (mock *LibraryDiscovererMock) DiscoverRDMAProviders() ([]RDMAProvider, error) {
+	callInfo := struct {
+	}{}
+	mock.lockDiscoverRDMAProviders.Lock()
+	mock.calls.DiscoverRDMAProviders = append(mock.calls.DiscoverRDMAProviders, callInfo)
+	mock.lockDiscoverRDMAProviders.Unlock()
+	if mock.DiscoverRDMAProvidersFunc == nil {
+		var (
+			rDMAProvidersOut []RDMAProvider
+			errOut           error
+		)
+		return rDMAProvidersOut, errOut
+	}
+	return mock.DiscoverRDMAProvidersFunc()
+}
+
+// DiscoverRDMAProvidersCalls gets all the calls that were made to DiscoverRDMAProviders.
+// Check the length with:
+//
+//	len(mockedLibraryDiscoverer.DiscoverRDMAProvidersCalls())
+func (mock *LibraryDiscovererMock) DiscoverRDMAProvidersCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockDiscoverRDMAProviders.RLock()
+	calls = mock.calls.DiscoverRDMAProviders
+	mock.lockDiscoverRDMAProviders.RUnlock()
 	return calls
 }
 
