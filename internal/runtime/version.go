@@ -80,6 +80,8 @@ func versionArgs(rt RuntimeType) []string {
 // package var so tests can stub version detection without exec-ing real host
 // binaries.
 var commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	// name is either "chroot" or a binary from the fixed versionArgs table.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 

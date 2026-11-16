@@ -119,8 +119,10 @@ ENV RBLN_CDI_OUTPUT=/var/run/cdi/rbln.yaml
 # Default working directory
 WORKDIR /
 
-# Run as root by default (needed for some host path access)
-# Can be overridden in Kubernetes with securityContext
+# Run as root: the daemon writes the host's container runtime config and CDI
+# spec directory, and restarts the runtime via chroot + systemctl. The
+# DaemonSet sets no runAsUser, so it relies on this default.
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
 USER root
 
 # Default: run as daemon for Kubernetes DaemonSet

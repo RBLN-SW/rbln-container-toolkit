@@ -31,7 +31,9 @@ jobs:
           ref: main
           fetch-depth: 0
       - name: Mirror push
-        run: ./hack/release-mirror.sh "${{ inputs.tag }}"
+        env:
+          TAG: ${{ inputs.tag }}
+        run: ./hack/release-mirror.sh "${TAG}"
 
   dockerhub:
     name: Push to Docker Hub
@@ -51,7 +53,9 @@ jobs:
         with:
           ref: main
       - name: Push to Docker Hub
-        run: ./hack/release-dockerhub.sh "${{ inputs.tag }}"
+        env:
+          TAG: ${{ inputs.tag }}
+        run: ./hack/release-dockerhub.sh "${TAG}"
 
   public-nexus:
     name: Push to Public Nexus
@@ -76,4 +80,6 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Push to public Nexus
-        run: ./hack/release-nexus-public.sh "${{ inputs.tag }}"
+        env:
+          TAG: ${{ inputs.tag }}
+        run: ./hack/release-nexus-public.sh "${TAG}"

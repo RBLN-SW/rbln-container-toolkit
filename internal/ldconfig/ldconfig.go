@@ -208,6 +208,9 @@ func (l *Ldconfig) runLdconfig() error {
 		"-r", l.ContainerRoot,
 	}
 
+	// LdconfigPath comes from the hook's --ldconfig-path flag, which the CDI
+	// spec sets from the root-owned toolkit config, not from container input.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd := exec.Command(l.LdconfigPath, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
