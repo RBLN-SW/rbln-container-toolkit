@@ -12,6 +12,9 @@
 # Usage: ./hack/release-nexus-public.sh <tag>
 #   tag: Git tag (e.g., v0.2.0). RC tags are skipped automatically.
 #
+# PUBLISH_MIRROR_ONLY=true skips the build and upload (publish.yml's
+# mirror_only input).
+#
 # Environment variables (all required for upload):
 #   NEXUS_PUBLIC_URL, NEXUS_PUBLIC_USERNAME, NEXUS_PUBLIC_PASSWORD
 
@@ -28,12 +31,40 @@ if [[ "${TAG}" == *-rc* ]]; then
     exit 0
 fi
 
+# Mirror-only runs refresh the public repo without re-publishing packages.
+if [[ "${PUBLISH_MIRROR_ONLY:-false}" == "true" ]]; then
+    echo "==> Mirror-only publish, skipping public Nexus push"
+    exit 0
+fi
+
 : "${NEXUS_PUBLIC_URL:?NEXUS_PUBLIC_URL is not set}"
 : "${NEXUS_PUBLIC_USERNAME:?NEXUS_PUBLIC_USERNAME is not set}"
 : "${NEXUS_PUBLIC_PASSWORD:?NEXUS_PUBLIC_PASSWORD is not set}"
 
 # Sanitize version (matches release-package.sh)
 VERSION="${VERSION//\//-}"
+
+# Build from the tag's tree, not from the caller's checkout. publish.yml checks
+# out main so the latest release scripts run for any tag; building that
+# checkout would ship main's code under the tag's version once main has moved
+# past the tag. The checkout is shallow and has no tags, so fetch the tag when
+# it is missing.
+if ! git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+    git fetch --quiet --no-tags --depth 1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+fi
+CURL_CFG=""
+REPO_DIR="$(pwd)"
+SRC_DIR="$(mktemp -d)"
+cleanup() {
+    rm -f "${CURL_CFG}"
+    git -C "${REPO_DIR}" worktree remove --force "${SRC_DIR}" 2>/dev/null || rm -rf "${SRC_DIR}"
+}
+trap cleanup EXIT
+# Drop registrations left by a killed run on a persistent self-hosted runner.
+git worktree prune
+git worktree add --quiet --detach "${SRC_DIR}" "refs/tags/${TAG}^{commit}"
+cd "${SRC_DIR}"
+echo "==> Building ${TAG} from $(git rev-parse --short HEAD)"
 
 # Install nfpm if not present — keep this pinned in lock-step with
 # release-package.sh so both flows ship byte-comparable packages even though
@@ -61,7 +92,6 @@ NEXUS_BASE="${NEXUS_PUBLIC_URL%/}"
 # the command line. `-u user:pass` would expose them in /proc/<pid>/cmdline
 # and `ps` output for any concurrent job sharing this self-hosted runner.
 CURL_CFG="$(mktemp)"
-trap 'rm -f "${CURL_CFG}"' EXIT
 printf 'user = "%s:%s"\n' "${NEXUS_PUBLIC_USERNAME}" "${NEXUS_PUBLIC_PASSWORD}" > "${CURL_CFG}"
 
 echo "==> Uploading to public Nexus (${NEXUS_BASE})..."

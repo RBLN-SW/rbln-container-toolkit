@@ -4,6 +4,8 @@
 # Usage: ./hack/release-dockerhub.sh <tag>
 #   tag: Git tag (e.g., v0.2.0). RC tags are skipped automatically.
 #
+# PUBLISH_MIRROR_ONLY=true skips the push (publish.yml's mirror_only input).
+#
 # Environment variables (all required):
 #   SSW_HARBOR_URL, SSW_HARBOR_USERNAME, SSW_HARBOR_PASSWORD
 #   DOCKERHUB_USERNAME, DOCKERHUB_PASSWORD
@@ -15,6 +17,12 @@ TAG="${1:?Usage: $0 <tag>}"
 # RC tags are not published to Docker Hub
 if [[ "${TAG}" == *-rc* ]]; then
     echo "==> RC tag detected (${TAG}), skipping Docker Hub push"
+    exit 0
+fi
+
+# Mirror-only runs refresh the public repo without re-publishing the image.
+if [[ "${PUBLISH_MIRROR_ONLY:-false}" == "true" ]]; then
+    echo "==> Mirror-only publish, skipping Docker Hub push"
     exit 0
 fi
 

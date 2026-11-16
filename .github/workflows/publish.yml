@@ -7,6 +7,10 @@ on:
         description: 'Release tag to publish (e.g., v0.2.0)'
         required: true
         type: string
+      mirror_only:
+        description: 'Only refresh the public repo; skip Docker Hub and public Nexus'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,6 +59,7 @@ jobs:
       - name: Push to Docker Hub
         env:
           TAG: ${{ inputs.tag }}
+          PUBLISH_MIRROR_ONLY: ${{ inputs.mirror_only }}
         run: ./hack/release-dockerhub.sh "${TAG}"
 
   public-nexus:
@@ -72,7 +77,8 @@ jobs:
       NEXUS_PUBLIC_USERNAME: ${{ secrets.NEXUS_PUBLIC_USERNAME }}
       NEXUS_PUBLIC_PASSWORD: ${{ secrets.NEXUS_PUBLIC_PASSWORD }}
     steps:
-      # See mirror job for rationale on `ref: main`.
+      # See mirror job for rationale on `ref: main`. The script builds the
+      # packages from the tag in a separate worktree, not from this checkout.
       - uses: actions/checkout@v4
         with:
           ref: main
@@ -82,4 +88,5 @@ jobs:
       - name: Push to public Nexus
         env:
           TAG: ${{ inputs.tag }}
+          PUBLISH_MIRROR_ONLY: ${{ inputs.mirror_only }}
         run: ./hack/release-nexus-public.sh "${TAG}"
