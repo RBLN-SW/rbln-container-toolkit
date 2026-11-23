@@ -1244,6 +1244,11 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 	err = yaml.Unmarshal(buf.Bytes(), &parsed)
 	require.NoError(t, err)
 
+	// The generated spec must also load under the strict decode CDI v1.1.1+
+	// runtimes use (case-sensitive keys, unknown keys rejected).
+	_, err = parseSpec(buf.Bytes())
+	require.NoError(t, err, "generated spec rejected by strict CDI parse:\n%s", buf.String())
+
 	// Then - Verify complete spec structure
 
 	// 1. Verify flow style in raw YAML output (mount options inline array)
@@ -1312,7 +1317,9 @@ func TestGenerator_Generate_CompleteSpecOutput(t *testing.T) {
 
 	hook, ok := hooks[0].(map[string]interface{})
 	require.True(t, ok, "hook should be a map")
-	assert.Equal(t, "createContainer", hook["hookname"])
+	assert.Equal(t, "createContainer", hook["hookName"])
+	assert.NotContains(t, hook, "hookname", "CDI key is hookName; strict runtimes reject hookname")
+	assert.NotContains(t, hook, "timeout", "nil timeout must be omitted, not written as null")
 	assert.Equal(t, "/usr/local/bin/rbln-cdi-hook", hook["path"])
 
 	// 7. Verify hook args contain --folder (folders are passed as CLI args, not env)
@@ -1686,7 +1693,7 @@ func TestGenerator_Generate_DeviceNodes_YAMLOutput(t *testing.T) {
 	// CDI fields the toolkit does not populate must never leak into the
 	// rendered spec — at least one strict containerd CDI parser rejected
 	// `intelRdt: null` from a typed-nil pointer, masking the spec as
-	// unresolvable in Kubernetes. See toYAMLContainerEdits.
+	// unresolvable in Kubernetes. See toCDIFileSpec.
 	assert.NotContains(t, output, "intelRdt:",
 		"unused IntelRdt must not be rendered (typed-nil leak regression guard)")
 	assert.NotContains(t, output, "additionalGids:",

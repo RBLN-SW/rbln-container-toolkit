@@ -296,6 +296,108 @@ func TestWriter_Write_MountOptionsFlowStyle(t *testing.T) {
 	assert.Contains(t, string(content), "options: [ro,")
 }
 
+func TestWriter_WriteToWriter_YAML_HookKeys(t *testing.T) {
+	// Given - a hook without env or timeout, like the create-symlinks hook
+	spec := &specs.Spec{
+		Version: "0.5.0",
+		Kind:    "rebellions.ai/npu",
+		Devices: []specs.Device{{Name: "runtime"}},
+		ContainerEdits: specs.ContainerEdits{
+			Hooks: []*specs.Hook{
+				{
+					HookName: "createContainer",
+					Path:     "/usr/local/bin/rbln-cdi-hook",
+					Args:     []string{"rbln-cdi-hook", "create-symlinks"},
+				},
+			},
+		},
+	}
+	var buf bytes.Buffer
+
+	// When
+	err := NewWriter().WriteToWriter(spec, &buf, "yaml")
+
+	// Then
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "hookName: createContainer")
+	assert.NotContains(t, out, "hookname")
+	assert.NotContains(t, out, "env:", "empty hook env must be omitted")
+	assert.NotContains(t, out, "timeout:", "nil hook timeout must be omitted")
+}
+
+// TestWriter_WriteToWriter_StrictRuntimeRoundTrip writes every field the
+// toolkit populates and reads it back with parseSpec, which decodes the way
+// CDI v1.1.1+ runtimes do (case-sensitive keys, unknown keys rejected). A key
+// spelled differently from the CDI spec fails the parse; a dropped or
+// mangled value fails the equality check.
+func TestWriter_WriteToWriter_StrictRuntimeRoundTrip(t *testing.T) {
+	timeout := 10
+	spec := &specs.Spec{
+		Version:     "0.6.0", // annotations need CDI v0.6.0 or later
+		Kind:        "rebellions.ai/npu",
+		Annotations: map[string]string{"rebellions.ai/generator": "rbln-ctk"},
+		Devices: []specs.Device{
+			{
+				Name:        "0",
+				Annotations: map[string]string{"rebellions.ai/pci": "0000:01:00.0"},
+				ContainerEdits: specs.ContainerEdits{
+					Env: []string{"RBLN_DEVICES=0"},
+					DeviceNodes: []*specs.DeviceNode{
+						{Path: "/dev/rbln0", Permissions: "rw"},
+						{Path: "/dev/rsd0", HostPath: "/dev/rsd1", Permissions: "rw"},
+					},
+				},
+			},
+		},
+		ContainerEdits: specs.ContainerEdits{
+			Env: []string{"RBLN_CTK=1"},
+			Hooks: []*specs.Hook{
+				{
+					HookName: "createContainer",
+					Path:     "/usr/local/bin/rbln-cdi-hook",
+					Args:     []string{"rbln-cdi-hook", "create-symlinks", "--link", "a::b"},
+				},
+				{
+					HookName: "createContainer",
+					Path:     "/usr/local/bin/rbln-cdi-hook",
+					Args:     []string{"rbln-cdi-hook", "update-ldcache", "--folder", "/usr/lib64"},
+					Env:      []string{"RBLN_CDI_HOOK_DEBUG=false"},
+					Timeout:  &timeout,
+				},
+			},
+			Mounts: []*specs.Mount{
+				{
+					HostPath:      "/usr/lib64/librbln-ml.so",
+					ContainerPath: "/usr/lib64/librbln-ml.so",
+					Options:       []string{"ro", "nosuid", "nodev", "bind"},
+				},
+				{
+					HostPath:      "/run/rbln",
+					ContainerPath: "/run/rbln",
+					Options:       []string{"rbind"},
+					Type:          "bind",
+				},
+			},
+		},
+	}
+
+	for _, format := range []string{"yaml", "json"} {
+		t.Run(format, func(t *testing.T) {
+			// Given
+			var buf bytes.Buffer
+			require.NoError(t, NewWriter().WriteToWriter(spec, &buf, format))
+
+			// When
+			parsed, err := parseSpec(buf.Bytes())
+
+			// Then
+			require.NoError(t, err, "strict CDI parse failed:\n%s", buf.String())
+			assert.Equal(t, spec, parsed)
+		})
+	}
+}
+
 // TestWriter_AtomicWrite_NoTornReadsUnderConcurrency stresses the atomic
 // write contract: a single writer alternates between two distinct specs at
 // max throughput while four concurrent readers parse the file. Every read
@@ -366,12 +468,12 @@ func TestWriter_AtomicWrite_NoTornReadsUnderConcurrency(t *testing.T) {
 					torn.Add(1)
 					continue
 				}
-				var ys yamlSpec
+				var ys cdiFileSpec
 				if err := yaml.Unmarshal(data, &ys); err != nil {
 					torn.Add(1)
 					continue
 				}
-				if ys.CDIVersion == "" || ys.Kind == "" {
+				if ys.Version == "" || ys.Kind == "" {
 					torn.Add(1)
 					continue
 				}

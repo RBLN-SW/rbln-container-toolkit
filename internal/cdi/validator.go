@@ -23,7 +23,6 @@ import (
 	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	"tags.cncf.io/container-device-interface/specs-go"
 
 	rbln_errors "github.com/RBLN-SW/rbln-container-toolkit/internal/errors"
@@ -82,10 +81,10 @@ func (v *validator) ValidateFile(path string) error {
 		return fmt.Errorf("read spec file: %w", err)
 	}
 
-	var spec specs.Spec
-	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return fmt.Errorf("parse spec file: %w", rbln_errors.ErrInvalidCDISpec)
+	spec, err := parseSpec(data)
+	if err != nil {
+		return fmt.Errorf("parse spec file %s: %v: %w", path, err, rbln_errors.ErrInvalidCDISpec)
 	}
 
-	return v.Validate(&spec)
+	return v.Validate(spec)
 }

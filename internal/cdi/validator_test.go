@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"tags.cncf.io/container-device-interface/specs-go"
+
+	rbln_errors "github.com/RBLN-SW/rbln-container-toolkit/internal/errors"
 )
 
 func TestValidator_Validate_ValidSpec(t *testing.T) {
@@ -142,15 +144,20 @@ func TestValidator_ValidateFile_ValidFile(t *testing.T) {
 	// Given
 	tmpDir := t.TempDir()
 	specPath := filepath.Join(tmpDir, "rbln.yaml")
-	specContent := `version: "0.5.0"
+	specContent := `cdiVersion: "0.5.0"
 kind: "rebellions.ai/npu"
 devices:
   - name: "runtime"
-    containeredits:
+    containerEdits:
       mounts:
-        - hostpath: "/usr/lib64/librbln-ml.so"
-          containerpath: "/usr/lib64/librbln-ml.so"
+        - hostPath: "/usr/lib64/librbln-ml.so"
+          containerPath: "/usr/lib64/librbln-ml.so"
           options: ["ro", "bind"]
+containerEdits:
+  hooks:
+    - hookName: createContainer
+      path: /usr/local/bin/rbln-cdi-hook
+      args: ["rbln-cdi-hook", "update-ldcache"]
 `
 	require.NoError(t, os.WriteFile(specPath, []byte(specContent), 0644))
 	validator := NewValidator()
@@ -160,6 +167,90 @@ devices:
 
 	// Then
 	assert.NoError(t, err)
+}
+
+func TestValidator_ValidateFile_JSON(t *testing.T) {
+	// Given - CDI runtimes read .json specs with the same decoder as .yaml
+	tmpDir := t.TempDir()
+	specPath := filepath.Join(tmpDir, "rbln.json")
+	specContent := `{"cdiVersion":"0.5.0","kind":"rebellions.ai/npu",` +
+		`"devices":[{"name":"0","containerEdits":{"deviceNodes":[{"path":"/dev/rbln0"}]}}],` +
+		`"containerEdits":{"hooks":[{"hookName":"createContainer","path":"/usr/local/bin/rbln-cdi-hook"}]}}`
+	require.NoError(t, os.WriteFile(specPath, []byte(specContent), 0644))
+	validator := NewValidator()
+
+	// When
+	err := validator.ValidateFile(specPath)
+
+	// Then
+	assert.NoError(t, err)
+}
+
+func TestValidator_ValidateFile_RejectsKeysStrictRuntimesRefuse(t *testing.T) {
+	// CDI v1.1.1+ runtimes (CRI-O 1.37, containerd 2.4, Docker 29.10,
+	// Podman 6.2) match keys case-sensitively and refuse unknown ones, so a
+	// lowercased key fails the whole spec file there and must fail here.
+	tests := []struct {
+		name    string
+		content string
+		badKey  string
+	}{
+		{
+			name: "lowercased hookName",
+			content: `cdiVersion: "0.5.0"
+kind: "rebellions.ai/npu"
+devices:
+  - name: "0"
+    containerEdits:
+      deviceNodes:
+        - path: /dev/rbln0
+containerEdits:
+  hooks:
+    - hookname: createContainer
+      path: /usr/local/bin/rbln-cdi-hook
+`,
+			badKey: "hookname",
+		},
+		{
+			name: "lowercased top-level keys",
+			content: `version: "0.5.0"
+kind: "rebellions.ai/npu"
+devices:
+  - name: "runtime"
+`,
+			badKey: "version",
+		},
+		{
+			name: "lowercased mount keys",
+			content: `cdiVersion: "0.5.0"
+kind: "rebellions.ai/npu"
+devices:
+  - name: "runtime"
+    containerEdits:
+      mounts:
+        - hostpath: /usr/lib64/librbln-ml.so
+          containerPath: /usr/lib64/librbln-ml.so
+`,
+			badKey: "hostpath",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given
+			specPath := filepath.Join(t.TempDir(), "rbln.yaml")
+			require.NoError(t, os.WriteFile(specPath, []byte(tt.content), 0644))
+			validator := NewValidator()
+
+			// When
+			err := validator.ValidateFile(specPath)
+
+			// Then
+			require.Error(t, err)
+			assert.ErrorIs(t, err, rbln_errors.ErrInvalidCDISpec)
+			assert.Contains(t, err.Error(), tt.badKey)
+		})
+	}
 }
 
 func TestValidator_ValidateFile_NonExistent(t *testing.T) {

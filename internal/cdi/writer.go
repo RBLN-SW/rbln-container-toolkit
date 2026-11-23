@@ -33,113 +33,27 @@ import (
 	rbln_errors "github.com/RBLN-SW/rbln-container-toolkit/internal/errors"
 )
 
-// yamlMount is a wrapper for specs.Mount with proper yaml omitempty tags.
-type yamlMount struct {
-	HostPath      string   `yaml:"hostPath"`
-	ContainerPath string   `yaml:"containerPath"`
-	Options       []string `yaml:"options,omitempty,flow"`
-	Type          string   `yaml:"type,omitempty"`
-}
-
-// yamlDeviceNode is a wrapper for specs.DeviceNode with proper yaml omitempty tags.
-type yamlDeviceNode struct {
-	Path        string `yaml:"path"`
-	HostPath    string `yaml:"hostPath,omitempty"`
-	Permissions string `yaml:"permissions,omitempty"`
-}
-
-// yamlContainerEdits is a wrapper for specs.ContainerEdits with proper yaml
-// omitempty tags. Only the fields the toolkit actually populates are wired
-// here — `IntelRdt` (Intel RDT cache/MB partitioning, unrelated to RBLN NPUs)
-// and `AdditionalGIDs` are intentionally omitted. Mirroring those nil-pointer
-// fields through `any` caused `intelRdt: null` to leak into the rendered spec
-// because typed-nil bypasses yaml.v3's `omitempty`, and at least one strict
-// containerd CDI parser version rejects the resulting spec as unresolvable.
-type yamlContainerEdits struct {
-	Env         []string          `yaml:"env,omitempty"`
-	DeviceNodes []*yamlDeviceNode `yaml:"deviceNodes,omitempty"`
-	Hooks       []any             `yaml:"hooks,omitempty"`
-	Mounts      []*yamlMount      `yaml:"mounts,omitempty"`
-}
-
-// yamlDevice is a wrapper for specs.Device with proper yaml omitempty tags.
-type yamlDevice struct {
-	Name           string             `yaml:"name"`
-	Annotations    map[string]string  `yaml:"annotations,omitempty"`
-	ContainerEdits yamlContainerEdits `yaml:"containerEdits"`
-}
-
-// yamlSpec is a wrapper for specs.Spec with proper yaml omitempty tags.
-type yamlSpec struct {
-	CDIVersion     string             `yaml:"cdiVersion"`
-	Kind           string             `yaml:"kind"`
-	Annotations    map[string]string  `yaml:"annotations,omitempty"`
-	Devices        []yamlDevice       `yaml:"devices,omitempty"`
-	ContainerEdits yamlContainerEdits `yaml:"containerEdits,omitempty"`
-}
-
-// toYAMLSpec converts a specs.Spec to yamlSpec for clean YAML output.
-func toYAMLSpec(spec *specs.Spec) yamlSpec {
-	ys := yamlSpec{
-		CDIVersion:     spec.Version,
-		Kind:           spec.Kind,
-		Annotations:    spec.Annotations,
-		ContainerEdits: toYAMLContainerEdits(&spec.ContainerEdits),
-	}
-
-	for i := range spec.Devices {
-		d := &spec.Devices[i]
-		ys.Devices = append(ys.Devices, yamlDevice{
-			Name:           d.Name,
-			Annotations:    d.Annotations,
-			ContainerEdits: toYAMLContainerEdits(&d.ContainerEdits),
-		})
-	}
-
-	return ys
-}
-
-// toYAMLContainerEdits converts a specs.ContainerEdits to its yaml-tagged
-// wrapper so empty fields are elided in the rendered spec. Used for both
-// top-level (spec.ContainerEdits) and per-device blocks.
+// toCDIFileSpec converts a specs.Spec into cdiFileSpec, the CDI key
+// definitions parseSpec decodes with, so the YAML writer and the strict
+// reader share one set of keys. specs-go v0.7.0 tags its types for JSON only;
+// marshaling them with yaml.v3 directly falls back to lowercased field names
+// (`hookname`), which runtimes built on CDI v1.1.1 or later reject. Both sides
+// carry the same JSON key names, so the conversion goes through JSON.
 //
-// Only Env / Mounts / Hooks / DeviceNodes are mirrored — the toolkit doesn't
-// emit IntelRdt or AdditionalGIDs anywhere, and copying nil-pointer fields
-// through an `any`-typed wrapper field made `intelRdt: null` leak into every
-// rendered spec, which a strict containerd CDI parser rejected.
-func toYAMLContainerEdits(edits *specs.ContainerEdits) yamlContainerEdits {
-	if edits == nil {
-		return yamlContainerEdits{}
+// Unset fields stay out of the rendered spec: every optional cdiFileSpec field
+// is `omitempty`, and optional structs such as IntelRdt are typed pointers,
+// which yaml.v3 elides when nil. Routing them through `any` instead once leaked
+// `intelRdt: null`, which a strict containerd CDI parser rejected.
+func toCDIFileSpec(spec *specs.Spec) (*cdiFileSpec, error) {
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
 	}
-	out := yamlContainerEdits{
-		Env: edits.Env,
+	var out cdiFileSpec
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
 	}
-
-	for _, dn := range edits.DeviceNodes {
-		out.DeviceNodes = append(out.DeviceNodes, &yamlDeviceNode{
-			Path:        dn.Path,
-			HostPath:    dn.HostPath,
-			Permissions: dn.Permissions,
-		})
-	}
-
-	for _, m := range edits.Mounts {
-		ym := &yamlMount{
-			HostPath:      m.HostPath,
-			ContainerPath: m.ContainerPath,
-			Options:       m.Options,
-		}
-		if m.Type != "" {
-			ym.Type = m.Type
-		}
-		out.Mounts = append(out.Mounts, ym)
-	}
-
-	for _, h := range edits.Hooks {
-		out.Hooks = append(out.Hooks, h)
-	}
-
-	return out
+	return &out, nil
 }
 
 // Writer writes CDI specifications to files or stdout.
@@ -270,9 +184,11 @@ func (w *writer) WriteToWriter(spec *specs.Spec, out io.Writer, format string) e
 
 	switch format {
 	case "yaml":
-		// Use yamlSpec wrapper for clean output (omits empty fields like type: "")
-		yamlSpec := toYAMLSpec(spec)
-		data, err = yaml.Marshal(yamlSpec)
+		var fileSpec *cdiFileSpec
+		fileSpec, err = toCDIFileSpec(spec)
+		if err == nil {
+			data, err = yaml.Marshal(fileSpec)
+		}
 	case "json":
 		data, err = json.MarshalIndent(spec, "", "  ")
 	default:
